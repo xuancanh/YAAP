@@ -301,7 +301,15 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "alignment.tolerance.days": 21,
     "alignment.cadenceDays.direction": 180,
     "alignment.cadenceDays.strategy": 90,
-    "alignment.cadenceDays.okr": 60
+    "alignment.cadenceDays.okr": 60,
+    "process.mustEnforcement": 0,
+    "process.editApproval": 0,
+    "process.reviseDeviationRate": 0.5,
+    "process.metricsWindowRuns": 10,
+    "process.maxActiveRuns": 3,
+    "process.defaultSlaHours": 8,
+    "process.loopMaxCeiling": 6,
+    "process.reviewCadenceDays": 7
    },
    "playbooks": [],
    "budget": {
@@ -590,7 +598,10 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "alignment.floor.budget": 1,
     "alignment.costShare": 0.1,
     "alignment.tolerance.targetShare": 0.05,
-    "alignment.tolerance.textShare": 0.35
+    "alignment.tolerance.textShare": 0.35,
+    "process.metricsWindowRuns": 40,
+    "process.defaultSlaHours": 24,
+    "process.loopMaxCeiling": 3
    },
    "playbooks": [],
    "budget": {
@@ -921,7 +932,12 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "alignment.tolerance.days": 21,
     "alignment.cadenceDays.direction": 180,
     "alignment.cadenceDays.strategy": 90,
-    "alignment.cadenceDays.okr": 60
+    "alignment.cadenceDays.okr": 60,
+    "process.editApproval": 0,
+    "process.metricsWindowRuns": 10,
+    "process.maxActiveRuns": 3,
+    "process.defaultSlaHours": 8,
+    "process.reviewCadenceDays": 7
    },
    "playbooks": [],
    "budget": {
@@ -1208,7 +1224,12 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "alignment.tolerance.textShare": 0.35,
     "alignment.cadenceDays.direction": 180,
     "alignment.cadenceDays.strategy": 90,
-    "alignment.cadenceDays.okr": 60
+    "alignment.cadenceDays.okr": 60,
+    "process.metricsWindowRuns": 40,
+    "process.maxActiveRuns": 3,
+    "process.defaultSlaHours": 8,
+    "process.loopMaxCeiling": 3,
+    "process.reviewCadenceDays": 7
    },
    "playbooks": [],
    "budget": {
@@ -1428,7 +1449,12 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "alignment.tolerance.targetShare": 0.05,
     "alignment.tolerance.textShare": 0.35,
     "alignment.cadenceDays.direction": 180,
-    "alignment.cadenceDays.strategy": 90
+    "alignment.cadenceDays.strategy": 90,
+    "process.reviseDeviationRate": 0.5,
+    "process.metricsWindowRuns": 40,
+    "process.maxActiveRuns": 3,
+    "process.defaultSlaHours": 24,
+    "process.loopMaxCeiling": 3
    },
    "playbooks": [],
    "budget": {
@@ -1599,7 +1625,11 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "alignment.required.externalCommitment": 2,
     "alignment.required.orgDesign": 2,
     "alignment.cadenceDays.direction": 180,
-    "alignment.cadenceDays.strategy": 90
+    "alignment.cadenceDays.strategy": 90,
+    "process.metricsWindowRuns": 10,
+    "process.maxActiveRuns": 3,
+    "process.slaAction": 0,
+    "process.defaultSlaHours": 24
    },
    "playbooks": [],
    "budget": {
@@ -1910,7 +1940,14 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "alignment.tolerance.days": 7,
     "alignment.tolerance.textShare": 0.35,
     "alignment.cadenceDays.strategy": 90,
-    "alignment.cadenceDays.projectBet": 90
+    "alignment.cadenceDays.projectBet": 90,
+    "process.editApproval": 2,
+    "process.reviseDeviationRate": 0.2,
+    "process.metricsWindowRuns": 40,
+    "process.defaultSlaHours": 48,
+    "process.loopMaxCeiling": 3,
+    "process.adHocSteps": 0,
+    "process.reviewCadenceDays": 30
    },
    "playbooks": [],
    "budget": {

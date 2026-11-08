@@ -8,8 +8,9 @@
 
 // ---- task source ----
 
-/** Where a task came from; the board shows it as a badge. */
-export const TASK_SOURCES = ['plan', 'meeting', 'retro', 'incident', 'escalation', 'agent', 'ceo', 'chat'] as const;
+/** Where a task came from; the board shows it as a badge. `process`: a step
+ *  of a process run materialised it (docs/processes.md). */
+export const TASK_SOURCES = ['plan', 'meeting', 'retro', 'incident', 'escalation', 'agent', 'ceo', 'chat', 'process'] as const;
 export type TaskSource = typeof TASK_SOURCES[number];
 
 export function isTaskSource(v: unknown): v is TaskSource {

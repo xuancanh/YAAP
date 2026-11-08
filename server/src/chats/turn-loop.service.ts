@@ -167,6 +167,9 @@ export interface ToolProviderHook {
   queuesInLoops?(name: string): boolean;
   contextFor(session: ChatSession): Promise<string | null>;
   onToolCall?(sessionId: string, call: AiToolCall): string | null;
+  /** Refuse one call without ending the turn (a process step's denied
+   *  tools, docs/processes.md): the message is the tool result, nothing runs. */
+  refuseCall?(session: ChatSession, call: AiToolCall): Promise<string | null>;
   /** Told after every executed tool call of an agent session with whether
    *  it failed (the tool-error streak of docs/incidents.md §2). Fire-and-forget. */
   onToolResult?(session: ChatSession, call: AiToolCall, result: { isError: boolean; output: string }): void;
@@ -976,6 +979,17 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
             history.push({ role: 'tool', content: output, toolCallId: call.id, isError: true });
             toolRecords.push({ tool: call.name, input: call.input, result: output, approved: 'deny', isError: true });
             yield { type: 'tool_result', id: call.id, name: call.name, output, isError: true };
+            continue;
+          }
+          // A provider may refuse one call and let the turn go on (a process
+          // step's denied tools): the refusal says what to do instead.
+          let refusal: string | null = null;
+          for (const p of this.providers()) { refusal = p.refuseCall ? await p.refuseCall(session, call).catch(() => null) : null; if (refusal) break; }
+          if (refusal) {
+            await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: refusal, toolName: call.name });
+            history.push({ role: 'tool', content: refusal, toolCallId: call.id, isError: true });
+            toolRecords.push({ tool: call.name, input: call.input, result: refusal, approved: 'deny', isError: true });
+            yield { type: 'tool_result', id: call.id, name: call.name, output: refusal, isError: true };
             continue;
           }
           // Org runs stop on a repeated identical call (the same-call loop

@@ -128,6 +128,10 @@ export function wouldCycle(taskId: string, deps: string[], edges: Map<string, st
   return null;
 }
 
+/** A gate on `requestReview`: a refusal text (what is missing and how to
+ *  satisfy it) or null to let the hand-off through. */
+export type SubmitGate = (orgId: string, task: OrgTask, input: { note: string; fromAgentId: string | null }) => Promise<string | null>;
+
 /** A listener told when a task is accepted (by check or by review), for
  *  harvesting golden-set cases (docs/evals.md §1). */
 export type AcceptedListener = (ev: { orgId: string; task: OrgTask; by: 'check' | 'review'; rounds: number }) => Promise<void> | void;
@@ -289,6 +293,13 @@ export class OrgTasksService {
       alreadyWoken: opts.alreadyWoken,
       closed: closed(t.status) ? true : reopened ? false : undefined,
     });
+  }
+
+  private readonly submitGates: SubmitGate[] = [];
+  /** Refuse a hand-off to review (OrgProcessesService: open MUST items). */
+  addSubmitGate(fn: SubmitGate): () => void {
+    this.submitGates.push(fn);
+    return () => { const i = this.submitGates.indexOf(fn); if (i >= 0) this.submitGates.splice(i, 1); };
   }
 
   /** OrgSensingService binds the check runner here (docs/sensing.md §3). */
@@ -458,6 +469,11 @@ export class OrgTasksService {
     source?: TaskSource | string | null;
     /** Checklist steps to start with (text lines). */
     steps?: string[];
+    /** Processes (docs/processes.md): the run and step this task performs,
+     *  and the process's category — `operating` processes (incidents, the
+     *  chief's sweep, request intake) run the company itself, so creation
+     *  gates keyed on goal alignment can let them through. */
+    process?: { runId: string; nodeId: string; category?: string } | null;
   }): Promise<OrgTask> {
     const org = await this.org.get(orgId);
     const title = (input.title ?? '').trim().slice(0, 200);
@@ -521,6 +537,7 @@ export class OrgTasksService {
       dependsOn: JSON.stringify(dependsOn), dueAt,
       source, blockedOn: '', steps: JSON.stringify(steps), startedAt: null, doneAt: status === 'done' ? now : null, blockedSeconds: 0,
       wakeSig: '', wakeCount: 0, nextWakeAt: null, failSig: '', failRepeats: 0, wakesPausedAt: null,
+      processRunId: input.process?.runId ?? null, processNodeId: input.process?.nodeId ?? null,
       createdAt: now, updatedAt: now,
     };
     await this.db.insert(orgTasks).values(row);
@@ -980,6 +997,12 @@ export class OrgTasksService {
   async requestReview(orgId: string, taskId: string, input: { note?: string; fromAgentId?: string | null; runId?: string | null; agentModels?: Map<string, { provider: string; model: string }>; reviewerHumanId?: string | null; evidence?: unknown }): Promise<OrgTask> {
     const t = await this.get(orgId, taskId);
     if (['done', 'cancelled'].includes(t.status)) throw new BadRequestException(`task is ${t.status}`);
+    // Submission gates (a process step's MUST items, docs/processes.md): a
+    // refusal names what is missing and how to satisfy it.
+    for (const gate of this.submitGates) {
+      const refusal = await gate(orgId, t, { note: input.note ?? '', fromAgentId: input.fromAgentId ?? null });
+      if (refusal) throw new BadRequestException(refusal);
+    }
     const org = await this.org.get(orgId);
     // Quality control (docs/quality.md): evidence and result policies first;
     // a refusal names what is missing and nothing moves.

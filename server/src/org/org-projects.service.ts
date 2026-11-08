@@ -183,7 +183,9 @@ export class OrgProjectsService {
     let project = input.projectId ? await this.org.project(orgId, input.projectId).catch(() => null) : null;
     if (!project) project = await this.systemProject(orgId, input.unitId, input.source === 'retro' ? 'operating' : 'unsorted');
     if (!project) return { projectId: input.projectId };
-    if (project.kind === 'operating' && input.assigneeAgentId) {
+    // A process step (docs/processes.md) is the company running a standing
+    // procedure, not a retro action: the meta-work cap does not demote it.
+    if (project.kind === 'operating' && input.assigneeAgentId && input.source !== 'process') {
       const org = await this.org.get(orgId);
       const cap = workTunable(org, 'work.operatingWipCap');
       const open = (await this.tasks.list(orgId, { projectId: project.id })).filter((t) => ACTIVE_OPEN.has(t.status)).length;

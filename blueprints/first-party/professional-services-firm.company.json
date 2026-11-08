@@ -283,7 +283,14 @@
     "alignment.tolerance.days": 7,
     "alignment.tolerance.textShare": 0.35,
     "alignment.cadenceDays.strategy": 90,
-    "alignment.cadenceDays.projectBet": 90
+    "alignment.cadenceDays.projectBet": 90,
+    "process.editApproval": 2,
+    "process.reviseDeviationRate": 0.2,
+    "process.metricsWindowRuns": 40,
+    "process.defaultSlaHours": 48,
+    "process.loopMaxCeiling": 3,
+    "process.adHocSteps": 0,
+    "process.reviewCadenceDays": 30
   },
   "playbooks": [],
   "budget": {

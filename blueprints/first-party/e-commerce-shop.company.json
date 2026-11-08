@@ -300,7 +300,12 @@
     "alignment.tolerance.days": 21,
     "alignment.cadenceDays.direction": 180,
     "alignment.cadenceDays.strategy": 90,
-    "alignment.cadenceDays.okr": 60
+    "alignment.cadenceDays.okr": 60,
+    "process.editApproval": 0,
+    "process.metricsWindowRuns": 10,
+    "process.maxActiveRuns": 3,
+    "process.defaultSlaHours": 8,
+    "process.reviewCadenceDays": 7
   },
   "playbooks": [],
   "budget": {

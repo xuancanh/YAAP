@@ -1433,6 +1433,9 @@ export const orgTasks = pgTable('org_tasks', {
   failSig: text('failSig').notNull().default(''),
   failRepeats: integer('failRepeats').notNull().default(0),
   wakesPausedAt: text('wakesPausedAt'),
+  /** Processes (docs/processes.md): the run and step this task performs; null otherwise. */
+  processRunId: text('processRunId'),
+  processNodeId: text('processNodeId'),
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 });
@@ -2918,3 +2921,148 @@ export const orgAlignments = pgTable('org_alignments', {
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 }, (t) => [uniqueIndex('idx_org_alignments_item').on(t.orgId, t.itemType, t.itemId)]);
+/** Processes (docs/processes.md, migration 0095): a company's standing
+ *  procedures as versioned graphs. The header row mirrors the active
+ *  version for lists (title, category, owner unit, status); the definition
+ *  lives only in `org_process_versions`. `name` is the slug a template, a
+ *  subprocess step and the tools refer to. */
+export const orgProcesses = pgTable('org_processes', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  name: text('name').notNull(),
+  title: text('title').notNull(),
+  description: text('description').notNull().default(''),
+  /** operating | delivery (docs/processes.md "Categories"). */
+  category: text('category').notNull().default('operating'),
+  /** The owning unit (its head owns runs); null = the company (the chief). */
+  unitId: text('unitId'),
+  /** active | retired. */
+  status: text('status').notNull().default('active'),
+  /** The active version's number and id. */
+  version: integer('version').notNull().default(1),
+  versionId: text('versionId'),
+  /** The built-in template it was made from ('' = authored). */
+  templateId: text('templateId').notNull().default(''),
+  /** template | kit:<id> | bootstrap | authored. */
+  source: text('source').notNull().default('authored'),
+  /** The last cadence fire, the owner's last metrics review. */
+  lastCadenceAt: text('lastCadenceAt'),
+  reviewedAt: text('reviewedAt'),
+  createdBy: text('createdBy').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt').notNull(),
+}, (t) => [uniqueIndex('idx_org_processes_name').on(t.orgId, t.name)]);
+
+/** Every version of a process, immutable once written: the definition JSON
+ *  (process-model.ts ProcessDef), who wrote it and why, and whether it is
+ *  the active one, superseded, waiting for an approval or rejected. */
+export const orgProcessVersions = pgTable('org_process_versions', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  processId: text('processId').notNull(),
+  version: integer('version').notNull(),
+  def: text('def').notNull().default('{}'),
+  hash: text('hash').notNull().default(''),
+  /** active | superseded | pending | rejected. */
+  status: text('status').notNull().default('active'),
+  author: text('author').notNull().default(''),
+  reason: text('reason').notNull().default(''),
+  /** JSON string[]: the diff against the version it was based on. */
+  diff: text('diff').notNull().default('[]'),
+  basedOn: integer('basedOn'),
+  approvalId: text('approvalId'),
+  createdAt: text('createdAt').notNull(),
+  activatedAt: text('activatedAt'),
+}, (t) => [uniqueIndex('idx_org_process_versions_n').on(t.processId, t.version)]);
+
+/** One run of a process. A strict run stays pinned to `versionId`; a run in
+ *  a dynamic stage may adopt a newer version at its next step choice.
+ *  `triggerRef` dedupes triggers (a cadence minute, an incident, a project). */
+export const orgProcessRuns = pgTable('org_process_runs', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  processId: text('processId').notNull(),
+  versionId: text('versionId').notNull(),
+  version: integer('version').notNull(),
+  /** PR-n, unique in the org. */
+  key: text('key').notNull(),
+  title: text('title').notNull().default(''),
+  /** running | blocked | done | failed | cancelled. */
+  status: text('status').notNull().default('running'),
+  /** The stage the run is in. */
+  stage: text('stage').notNull().default(''),
+  ownerAgentId: text('ownerAgentId'),
+  /** Who started it: agent:<id> | user | human:<id> | process | trigger. */
+  initiator: text('initiator').notNull().default(''),
+  /** JSON { kind, event?, ref?, by }. */
+  trigger: text('trigger').notNull().default('{}'),
+  triggerRef: text('triggerRef').notNull(),
+  projectId: text('projectId'),
+  unitId: text('unitId'),
+  /** JSON Record<string, string>: inputs and step outputs. */
+  vars: text('vars').notNull().default('{}'),
+  /** JSON Record<"from>to", number>: how often each loop edge fired. */
+  loops: text('loops').notNull().default('{}'),
+  parentRunId: text('parentRunId'),
+  parentStepId: text('parentStepId'),
+  note: text('note').notNull().default(''),
+  startedAt: text('startedAt').notNull(),
+  endedAt: text('endedAt'),
+  updatedAt: text('updatedAt').notNull(),
+}, (t) => [uniqueIndex('idx_org_process_runs_key').on(t.orgId, t.key), uniqueIndex('idx_org_process_runs_ref').on(t.processId, t.triggerRef)]);
+
+/** One step of a run (an attempt of a node). UNIQUE (run, node, attempt)
+ *  makes materialisation idempotent; `current` = 0 marks an attempt a loop
+ *  sent back (history, counted as rework). A dynamic stage's coordinator is
+ *  the node `@<stage>`; an ad-hoc step is `adhoc-<n>` with its spec here. */
+export const orgProcessSteps = pgTable('org_process_steps', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  runId: text('runId').notNull(),
+  nodeId: text('nodeId').notNull(),
+  attempt: integer('attempt').notNull().default(1),
+  /** task | approval | wait | subprocess | stage. */
+  kind: text('kind').notNull().default('task'),
+  stage: text('stage').notNull().default(''),
+  /** active | done | skipped | failed | cancelled. */
+  status: text('status').notNull().default('active'),
+  current: integer('current').notNull().default(1),
+  taskId: text('taskId'),
+  approvalId: text('approvalId'),
+  childRunId: text('childRunId'),
+  /** A wait step's due time; the SLA deadline and when its breach was handled. */
+  dueAt: text('dueAt'),
+  slaAt: text('slaAt'),
+  slaBreachedAt: text('slaBreachedAt'),
+  /** JSON Record<string, string>. */
+  outputs: text('outputs').notNull().default('{}'),
+  /** JSON Array<{ level, item, reason, alternative, status, approvalId?, by, at }>. */
+  deviations: text('deviations').notNull().default('[]'),
+  /** JSON node spec of an ad-hoc step ('' otherwise). */
+  spec: text('spec').notNull().default(''),
+  /** Who chose it (dynamic stages) and the outcome word (approved, rejected, …). */
+  chosenBy: text('chosenBy').notNull().default(''),
+  outcome: text('outcome').notNull().default(''),
+  startedAt: text('startedAt').notNull(),
+  endedAt: text('endedAt'),
+}, (t) => [uniqueIndex('idx_org_process_steps_attempt').on(t.runId, t.nodeId, t.attempt)]);
+
+/** The append-only process event log (case = run, activity, time, actor):
+ *  the minimal process-mining record — started, materialised, chosen,
+ *  deviated, completed, looped, escalated, adopted a version, edited. */
+export const orgProcessEvents = pgTable('org_process_events', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  processId: text('processId').notNull(),
+  runId: text('runId').notNull().default(''),
+  nodeId: text('nodeId').notNull().default(''),
+  activity: text('activity').notNull(),
+  actor: text('actor').notNull().default(''),
+  detail: text('detail').notNull().default('{}'),
+  at: text('at').notNull(),
+});

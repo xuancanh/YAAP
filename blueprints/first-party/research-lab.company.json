@@ -192,7 +192,12 @@
     "alignment.tolerance.targetShare": 0.05,
     "alignment.tolerance.textShare": 0.35,
     "alignment.cadenceDays.direction": 180,
-    "alignment.cadenceDays.strategy": 90
+    "alignment.cadenceDays.strategy": 90,
+    "process.reviseDeviationRate": 0.5,
+    "process.metricsWindowRuns": 40,
+    "process.maxActiveRuns": 3,
+    "process.defaultSlaHours": 24,
+    "process.loopMaxCeiling": 3
   },
   "playbooks": [],
   "budget": {

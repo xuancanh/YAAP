@@ -2645,6 +2645,126 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_alignments_item ON org_alignments ("orgId", "itemType", "itemId")`);
     },
   },
+  {
+    id: '0097-processes',
+    up: async (db) => {
+      // Processes (docs/processes.md): versioned procedure graphs, their
+      // runs, the steps each run materialised (UNIQUE run/node/attempt keeps
+      // materialisation idempotent across restarts) and the append-only
+      // event log; a task names the run and step it performs. Idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS org_processes (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "name" TEXT NOT NULL,
+        "title" TEXT NOT NULL,
+        "description" TEXT NOT NULL DEFAULT '',
+        "category" TEXT NOT NULL DEFAULT 'operating',
+        "unitId" TEXT,
+        "status" TEXT NOT NULL DEFAULT 'active',
+        "version" INTEGER NOT NULL DEFAULT 1,
+        "versionId" TEXT,
+        "templateId" TEXT NOT NULL DEFAULT '',
+        "source" TEXT NOT NULL DEFAULT 'authored',
+        "lastCadenceAt" TEXT,
+        "reviewedAt" TEXT,
+        "createdBy" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL,
+        "updatedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_processes_name ON org_processes ("orgId", "name")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_process_versions (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "processId" TEXT NOT NULL,
+        "version" INTEGER NOT NULL,
+        "def" TEXT NOT NULL DEFAULT '{}',
+        "hash" TEXT NOT NULL DEFAULT '',
+        "status" TEXT NOT NULL DEFAULT 'active',
+        "author" TEXT NOT NULL DEFAULT '',
+        "reason" TEXT NOT NULL DEFAULT '',
+        "diff" TEXT NOT NULL DEFAULT '[]',
+        "basedOn" INTEGER,
+        "approvalId" TEXT,
+        "createdAt" TEXT NOT NULL,
+        "activatedAt" TEXT
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_process_versions_n ON org_process_versions ("processId", "version")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_process_runs (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "processId" TEXT NOT NULL,
+        "versionId" TEXT NOT NULL,
+        "version" INTEGER NOT NULL,
+        "key" TEXT NOT NULL,
+        "title" TEXT NOT NULL DEFAULT '',
+        "status" TEXT NOT NULL DEFAULT 'running',
+        "stage" TEXT NOT NULL DEFAULT '',
+        "ownerAgentId" TEXT,
+        "initiator" TEXT NOT NULL DEFAULT '',
+        "trigger" TEXT NOT NULL DEFAULT '{}',
+        "triggerRef" TEXT NOT NULL,
+        "projectId" TEXT,
+        "unitId" TEXT,
+        "vars" TEXT NOT NULL DEFAULT '{}',
+        "loops" TEXT NOT NULL DEFAULT '{}',
+        "parentRunId" TEXT,
+        "parentStepId" TEXT,
+        "note" TEXT NOT NULL DEFAULT '',
+        "startedAt" TEXT NOT NULL,
+        "endedAt" TEXT,
+        "updatedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_process_runs_key ON org_process_runs ("orgId", "key")`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_process_runs_ref ON org_process_runs ("processId", "triggerRef")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_process_runs_status ON org_process_runs ("orgId", "status")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_process_steps (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "runId" TEXT NOT NULL,
+        "nodeId" TEXT NOT NULL,
+        "attempt" INTEGER NOT NULL DEFAULT 1,
+        "kind" TEXT NOT NULL DEFAULT 'task',
+        "stage" TEXT NOT NULL DEFAULT '',
+        "status" TEXT NOT NULL DEFAULT 'active',
+        "current" INTEGER NOT NULL DEFAULT 1,
+        "taskId" TEXT,
+        "approvalId" TEXT,
+        "childRunId" TEXT,
+        "dueAt" TEXT,
+        "slaAt" TEXT,
+        "slaBreachedAt" TEXT,
+        "outputs" TEXT NOT NULL DEFAULT '{}',
+        "deviations" TEXT NOT NULL DEFAULT '[]',
+        "spec" TEXT NOT NULL DEFAULT '',
+        "chosenBy" TEXT NOT NULL DEFAULT '',
+        "outcome" TEXT NOT NULL DEFAULT '',
+        "startedAt" TEXT NOT NULL,
+        "endedAt" TEXT
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_process_steps_attempt ON org_process_steps ("runId", "nodeId", "attempt")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_process_steps_task ON org_process_steps ("taskId")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_process_events (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "processId" TEXT NOT NULL,
+        "runId" TEXT NOT NULL DEFAULT '',
+        "nodeId" TEXT NOT NULL DEFAULT '',
+        "activity" TEXT NOT NULL,
+        "actor" TEXT NOT NULL DEFAULT '',
+        "detail" TEXT NOT NULL DEFAULT '{}',
+        "at" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_process_events_run ON org_process_events ("processId", "runId")`);
+      if (!(await hasColumn(db, 'org_tasks', 'processRunId'))) await db.query(`ALTER TABLE org_tasks ADD COLUMN "processRunId" TEXT`);
+      if (!(await hasColumn(db, 'org_tasks', 'processNodeId'))) await db.query(`ALTER TABLE org_tasks ADD COLUMN "processNodeId" TEXT`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_tasks_process_run ON org_tasks ("processRunId")`);
+    },
+  },
 ];
 
 /**

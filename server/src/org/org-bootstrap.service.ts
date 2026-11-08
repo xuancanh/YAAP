@@ -136,6 +136,11 @@ export class OrgBootstrapService {
     @Optional() private readonly layout?: OrgLayoutService,
   ) {}
 
+  private readonly bootstrapped: Array<(orgId: string) => Promise<string[]>> = [];
+  /** Another module seeds the new company's records at step 8 (OrgProcessesService:
+   *  the process library, docs/processes.md); it returns lines for the summary. */
+  onBootstrapped(fn: (orgId: string) => Promise<string[]>): void { this.bootstrapped.push(fn); }
+
   /** `role:<id>`, a bare role id or a role title → the catalog hire
    *  (`templateOrPack: 'role:<id>'`); else a market pack by id or name. */
   resolveRole(role: string): { templateOrPack: string; title?: string; label: string; kind: 'role' | 'pack' } | null {
@@ -279,6 +284,10 @@ export class OrgBootstrapService {
     // operating-system files under /org/.
     const kit = await this.installChiefKit(orgId, chiefId, notes);
     const artifacts = await this.seedLedger(orgId, workspaceId, plan, input, notes);
+    for (const fn of this.bootstrapped) {
+      const lines = await fn(orgId).catch((err: unknown) => { notes.push(`seeding failed: ${err instanceof Error ? err.message : String(err)}`); return [] as string[]; });
+      if (lines.length) notes.push(`seeded ${lines.join(', ')}`);
+    }
     if (this.layout) artifacts.push(...(await this.layout.refresh(orgId).catch((err: unknown) => { notes.push(`the /org/ indexes were not written: ${err instanceof Error ? err.message : String(err)}`); return [] as string[]; })).map((p) => `/${p}`));
     const operatingSystem: BootstrapSummary['operatingSystem'] = { stage: plan.stage, cultureType: plan.cultureType, archetype: plan.archetype, tunables: osTuned, skills: kit.skills, loops: kit.loops, artifacts };
 

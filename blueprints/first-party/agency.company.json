@@ -213,7 +213,10 @@
     "alignment.floor.budget": 1,
     "alignment.costShare": 0.1,
     "alignment.tolerance.targetShare": 0.05,
-    "alignment.tolerance.textShare": 0.35
+    "alignment.tolerance.textShare": 0.35,
+    "process.metricsWindowRuns": 40,
+    "process.defaultSlaHours": 24,
+    "process.loopMaxCeiling": 3
   },
   "playbooks": [],
   "budget": {

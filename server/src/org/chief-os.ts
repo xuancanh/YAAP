@@ -32,6 +32,7 @@ import { deriveWorkTunables } from './work-tunables';
 import { deriveMemoryTunables } from './memory-tunables';
 import { deriveProgramTunables } from './program-tunables';
 import { deriveQualityTunables } from './quality-tunables';
+import { deriveProcessTunables } from './process-tunables';
 import { deriveDiscussionTunables } from '../groupchat/discussion-tunables';
 import { deriveAlignmentTunables } from './alignment';
 // The assurance keys (audit.assuranceDebounceHours) join the registry at import.
@@ -165,6 +166,8 @@ export function deriveOperatingSystem(p: ProfileInput): OperatingSystemPlan {
   for (const t of deriveQualityTunables(d)) set(t.key, t.value, t.why);
   // CEO alignment (docs/alignment.md): who aligns each class, the supervised floor, tolerances, cadences.
   for (const t of deriveAlignmentTunables(d)) set(t.key, t.value, t.why);
+  // Processes (docs/processes.md): MUST enforcement, edit approval, revision threshold, SLAs, loops, reviews.
+  for (const t of deriveProcessTunables(d)) set(t.key, t.value, t.why);
 
   const decisionProtocol = {
     clan: 'Consensus-seeking with one named final decider; dissent is recorded, then the decider decides.',
