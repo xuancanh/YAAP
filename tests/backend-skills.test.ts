@@ -28,8 +28,8 @@ test('workspace scoping: global skills everywhere, workspace skills only at home
   await skills.seedBuiltins();
   await skills.create({ name: 'ws-only', instructions: 'do the thing', workspaceId: 'ws1' });
 
-  assert.equal((await skills.list('ws1')).length, 11); // 10 builtins + ws-only
-  assert.equal((await skills.list('ws2')).length, 10);
+  assert.equal((await skills.list('ws1')).length, 12); // 11 builtins + ws-only
+  assert.equal((await skills.list('ws2')).length, 11);
 
   const specs = await skills.toolSpecs('ws1');
   assert.ok(specs.some((s) => s.name === 'skill_ws_only'));

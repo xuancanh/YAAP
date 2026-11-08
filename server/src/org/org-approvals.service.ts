@@ -423,7 +423,8 @@ export class OrgApprovalsService {
       // appetite decisions and kills (OrgProjectsService, docs/work-tracking.md);
       // a kit or plugin change an agent proposed (OrgFoundryTools, docs/foundry.md §4.7);
       // the program matrix's escalated resource request (docs/work-tracking.md);
-      // a policy or standard change and a one-time policy exception (OrgQualityService, docs/quality.md).
+      // a policy or standard change and a one-time policy exception (OrgQualityService, docs/quality.md);
+      // a process's approval step, MUST waiver or edit (OrgProcessesService, docs/processes.md).
       case 'cadence':
       case 'charter_change':
       case 'metric_source':
@@ -438,7 +439,6 @@ export class OrgApprovalsService {
       case 'plugin_change':
       case 'quality_change':
       case 'policy_exception':
-      // Processes (docs/processes.md, OrgProcessesService): an approval step, a MUST waiver, an edit.
       case 'process_gate':
       case 'process_deviation':
       case 'process_change':
