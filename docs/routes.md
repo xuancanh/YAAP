@@ -32,7 +32,8 @@ localStorage), else the first, on Home.
 
 | Address | Opens |
 |---|---|
-| `/:company/home` | Home, the owner's mission control (`section` `overview`) |
+| `/:company/home` | Home, the owner's mission control (`section` `overview`), on its Overview tab |
+| `/:company/home/:tab` | Home on another tab: `progress`, `team`, `activity` (docs/home.md "Tabs"; an unknown tab is the Overview) |
 | `/:company/inbox[/:filter]` | The Inbox, on a filter (`approvals`, `mytasks`, `plans`, …) |
 | `/:company/inbox/:filter/:itemId` | The Inbox with one item open in the reading pane (a feed item id, e.g. `need:approval:<id>`; `all` for the default tab) |
 | `/:company/chat` | Channels & chats (on a phone: the list) |

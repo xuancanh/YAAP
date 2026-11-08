@@ -91,6 +91,10 @@ describe('Home — Messages from your team', () => {
     const onMessage = vi.fn();
     const items = [msg({ id: 'h1', text: '<img src=x onerror=alert(1)> **bold?**', urgency: 'urgent', refs: ['OPS-1', '/org/a.md'] }), msg({ id: 'h2', read: true })];
     render(<HomeBoard data={home({ items, unread: 1 })} narrow={false} wide={false} now={new Date('2026-11-02T12:00:00Z')} onAct={vi.fn()} onOpen={vi.fn()} onAllAgents={vi.fn()} onMessage={onMessage} />);
+    // The Overview shows the unread ones at a glance; the Team tab has them all.
+    expect(within(screen.getByTestId('home-messages')).queryByTestId('home-message-h2')).toBeNull();
+    fireEvent.click(within(screen.getByTestId('home-messages')).getByRole('button', { name: 'All messages' }));
+    expect(screen.getByTestId('home-tab-team')).toHaveAttribute('aria-selected', 'true');
     const block = screen.getByTestId('home-messages');
     expect(within(block).getByRole('heading')).toHaveTextContent('Messages from your team');
     expect(block).toHaveTextContent('1');

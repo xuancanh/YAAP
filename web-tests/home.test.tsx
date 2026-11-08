@@ -57,6 +57,9 @@ function fixture(over: Partial<HomeData> = {}): HomeData {
   };
 }
 
+/** Switch Home's tab the way the owner does. */
+const tab = (t: 'overview' | 'progress' | 'team' | 'activity') => fireEvent.click(screen.getByTestId(`home-tab-${t}`));
+
 const board = (data: HomeData, extra: Partial<Parameters<typeof HomeBoard>[0]> = {}) => {
   const onAct = vi.fn(); const onOpen = vi.fn(); const onAllAgents = vi.fn();
   render(<HomeBoard data={data} narrow={false} wide now={NOW} name="Linh" onAct={onAct} onOpen={onOpen} onAllAgents={onAllAgents} {...extra} />);
@@ -150,7 +153,7 @@ describe('HomeBoard — a company', () => {
 
   it('shows the key numbers: needs you, spend against the envelope with the forecast, done this week against last, blocked, agents, pulse', () => {
     const series = Array.from({ length: 14 }, (_, i) => ({ day: `2026-10-${String(20 + i).padStart(2, '0')}`, done: i < 7 ? 1 : 2 }));
-    const { onOpen, onAllAgents } = board(fixture({ recap: { ...fixture().recap, doneSeries: series } }));
+    const { onOpen } = board(fixture({ recap: { ...fixture().recap, doneSeries: series } }));
     expect(screen.getByTestId('kpi-needs')).toHaveTextContent('3');
     fireEvent.click(screen.getByTestId('kpi-needs'));
     expect(onOpen).toHaveBeenLastCalledWith({ to: 'inbox' });
@@ -165,9 +168,10 @@ describe('HomeBoard — a company', () => {
     expect(within(screen.getByTestId('kpi-done')).getByRole('img')).toHaveAccessibleName(/Tasks done per day/);
     expect(screen.getByTestId('kpi-blocked')).toHaveTextContent('1');
     expect(screen.getByTestId('kpi-agents')).toHaveTextContent('1/ 2');
-    fireEvent.click(screen.getByTestId('kpi-agents'));
-    expect(onAllAgents).toHaveBeenCalled();
     expect(screen.getByTestId('kpi-pulse')).toHaveTextContent('82');
+    fireEvent.click(screen.getByTestId('kpi-agents'));
+    expect(screen.getByTestId('home-panel-team')).toBeInTheDocument();
+    expect(screen.getByTestId('home-tab-team')).toHaveAttribute('aria-selected', 'true');
   });
 
   it('lists what needs the owner as compact rows: kind, a clean title, the default, the recommendation, inline decisions, detail on demand', () => {
@@ -205,13 +209,17 @@ describe('HomeBoard — a company', () => {
     expect(onOpen).toHaveBeenCalledWith({ to: 'task', taskId: 't11' });
   });
 
-  it('shows the top five and links the rest', () => {
+  it('shows the top three and links the rest to the Inbox; without a company, the top five and the rest in place', () => {
     const many = Array.from({ length: 7 }, (_, i) => need({ id: `approval:${i}`, title: `Card ${i}` }));
-    board(fixture({ needs: many, headline: { ...fixture().headline, needsYou: 9 } }));
+    const { onOpen } = board(fixture({ needs: many, headline: { ...fixture().headline, needsYou: 9 } }));
+    expect(screen.getAllByTestId('need-card')).toHaveLength(3);
+    fireEvent.click(screen.getByRole('button', { name: '6 more in the Inbox' }));
+    expect(onOpen).toHaveBeenCalledWith({ to: 'inbox' });
+    cleanup();
+    board(fixture({ company: null, needs: many, headline: { ...fixture().headline, needsYou: 7 } }));
     expect(screen.getAllByTestId('need-card')).toHaveLength(5);
-    fireEvent.click(screen.getByRole('button', { name: '4 more' }));
+    fireEvent.click(screen.getByRole('button', { name: '2 more' }));
     expect(screen.getAllByTestId('need-card')).toHaveLength(7);
-    expect(screen.getByRole('button', { name: '2 more in the Inbox' })).toBeInTheDocument();
   });
 
   it('disables a card while its decision is in flight', () => {
@@ -220,8 +228,53 @@ describe('HomeBoard — a company', () => {
     expect(within(hire).getByRole('button', { name: 'Approve' })).toBeDisabled();
   });
 
+  it('opens on the Overview: banners, key numbers, the top of Needs you and a short "while you were away"', () => {
+    const { onOpen } = board(fixture());
+    expect(screen.getByTestId('home-tab-overview')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('home-tab-overview')).toHaveAccessibleName('Overview, 3 need you');
+    expect(screen.getByTestId('home-kpis')).toBeInTheDocument();
+    expect(screen.getByTestId('home-needs')).toBeInTheDocument();
+    const away = screen.getByTestId('home-away');
+    expect(away).toHaveTextContent('Overnight');
+    expect(within(away).getByTestId('away-facts')).toHaveTextContent('12 tasks done, 2 decided without you, 4 files changed.');
+    expect(within(away).getByTestId('home-brief')).toHaveTextContent('+40');
+    expect(within(away).getAllByRole('listitem').length).toBeGreaterThan(0);
+    // the rest lives on the other tabs
+    for (const id of ['home-team', 'home-goals', 'home-portfolio', 'home-recap', 'home-activity', 'home-spend', 'home-artifacts', 'home-upcoming']) expect(screen.queryByTestId(id)).toBeNull();
+    fireEvent.click(within(away).getByRole('button', { name: 'Everything that happened' }));
+    expect(screen.getByTestId('home-panel-activity')).toBeInTheDocument();
+    fireEvent.click(within(screen.getByTestId('home-recap')).getByRole('button', { name: 'Read the brief' }));
+    expect(onOpen).toHaveBeenCalledWith({ to: 'pane', pane: 'brief' });
+  });
+
+  it('moves between tabs with the arrow keys, Home and End, and reports each pick', () => {
+    const onTab = vi.fn();
+    board(fixture(), { onTab });
+    const overview = screen.getByTestId('home-tab-overview');
+    expect(overview).toHaveAttribute('tabindex', '0');
+    expect(screen.getByTestId('home-tab-team')).toHaveAttribute('tabindex', '-1');
+    fireEvent.keyDown(overview, { key: 'ArrowRight' });
+    expect(onTab).toHaveBeenLastCalledWith('progress');
+    expect(screen.getByTestId('home-tab-progress')).toHaveFocus();
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'home-tab-progress');
+    fireEvent.keyDown(screen.getByTestId('home-tab-progress'), { key: 'End' });
+    expect(onTab).toHaveBeenLastCalledWith('activity');
+    fireEvent.keyDown(screen.getByTestId('home-tab-activity'), { key: 'ArrowRight' });
+    expect(onTab).toHaveBeenLastCalledWith('overview');
+    fireEvent.keyDown(screen.getByTestId('home-tab-overview'), { key: 'ArrowLeft' });
+    expect(onTab).toHaveBeenLastCalledWith('activity');
+  });
+
+  it('shows the tab the address names', () => {
+    board(fixture(), { tab: 'progress' });
+    expect(screen.getByTestId('home-tab-progress')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('home-goals')).toBeInTheDocument();
+    expect(screen.queryByTestId('home-kpis')).toBeNull();
+  });
+
   it('summarises since the last visit with the brief\'s first bullets, and goals at risk first', () => {
     const { onOpen } = board(fixture());
+    tab('activity');
     const recap = screen.getByTestId('home-recap');
     expect(recap).toHaveTextContent('Overnight');
     expect(recap).toHaveTextContent('2 decided without you, 4 files changed.');
@@ -232,6 +285,7 @@ describe('HomeBoard — a company', () => {
     expect(brief).not.toHaveTextContent('Outcomes');
     fireEvent.click(within(brief).getByRole('button', { name: 'Read the brief' }));
     expect(onOpen).toHaveBeenCalledWith({ to: 'pane', pane: 'brief' });
+    tab('progress');
     const goals = screen.getAllByTestId('home-goal');
     expect(goals.map((g) => g.getAttribute('data-rag'))).toEqual(['red', 'green']);
     expect(goals[0]).toHaveTextContent('At risk');
@@ -241,6 +295,7 @@ describe('HomeBoard — a company', () => {
   it('shows highlights, file edits grouped per person, and the full feed behind a toggle', () => {
     const edits = ['JOURNAL.md', 'a.md', 'b.md'].map((f, i) => ({ id: `f${i}`, at: iso(-60 - i), kind: 'file' as const, title: `Edited notes/${f}`, detail: 'version 5', actor: 'Tutor Engineer', ref: { type: 'file', id: `notes/${f}` } }));
     const { onOpen } = board(fixture({ activity: [...fixture().activity, ...edits] }));
+    tab('activity');
     const hl = screen.getByTestId('activity-highlights');
     expect(within(hl).getAllByRole('listitem')).toHaveLength(4); // 3 events (Writer's one file among them), Tutor Engineer's group
     const group = within(hl).getByTestId('highlight-files');
@@ -255,6 +310,7 @@ describe('HomeBoard — a company', () => {
 
   it('filters the full activity feed', () => {
     board(fixture());
+    tab('activity');
     fireEvent.click(screen.getByRole('button', { name: 'All activity' }));
     const list = () => screen.getByTestId('activity-list');
     expect(within(list()).getAllByRole('listitem')).toHaveLength(3);
@@ -265,6 +321,7 @@ describe('HomeBoard — a company', () => {
 
   it('shows spend against the envelope with the forecast, and the last audit', () => {
     board(fixture());
+    tab('progress');
     const s = screen.getByTestId('home-spend');
     expect(s).toHaveTextContent('$12.40');
     expect(s).toHaveTextContent('of $20.00 this month');
@@ -275,6 +332,9 @@ describe('HomeBoard — a company', () => {
   it('surfaces agent errors loudly, pins failing agents on top with a fix, and links to the full directory', () => {
     const failing = agent({ id: 'x', name: 'Analyst', state: 'error', errors: [{ kind: 'turn', message: 'model "gpt-9-ultra" not found (404)', at: iso(-3), sessionId: 's9' }] });
     const { onAllAgents, onOpen } = board(fixture({ team: [agent(), failing] }));
+    expect(screen.getByTestId('kpi-agents')).toHaveTextContent('1 failing');
+    expect(screen.getByTestId('home-tab-team')).toHaveAccessibleName('Team, 1 failing');
+    tab('team');
     expect(within(screen.getByTestId('home-team')).getByRole('alert')).toHaveTextContent('One agent is failing.');
     const rows = screen.getAllByTestId('team-agent');
     expect(rows[0].getAttribute('data-state')).toBe('error');
@@ -287,7 +347,6 @@ describe('HomeBoard — a company', () => {
     expect(onOpen).toHaveBeenLastCalledWith({ to: 'agent', agentId: 'x' });
     fireEvent.click(within(rows[1]).getByRole('button', { name: /Writer/ }));
     expect(onOpen).toHaveBeenLastCalledWith({ to: 'agent', agentId: 'w' });
-    expect(screen.getByTestId('kpi-agents')).toHaveTextContent('1 failing');
     fireEvent.click(screen.getByRole('button', { name: 'All agents' }));
     expect(onAllAgents).toHaveBeenCalled();
   });
@@ -313,6 +372,7 @@ describe('HomeBoard — no company', () => {
     // an empty workspace: the start card leads; no strip of zeros, no empty panels
     expect(screen.queryByTestId('home-kpis')).toBeNull();
     expect(screen.queryByTestId('home-team')).toBeNull();
+    expect(screen.queryByTestId('home-tabs')).toBeNull();
     expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Good morning, Linh.');
   });
 
@@ -327,7 +387,13 @@ describe('HomeBoard — no company', () => {
     // the simpler variant: no company numbers, no roadmap, no goals
     expect(screen.queryByTestId('kpi-pulse')).toBeNull();
     expect(screen.getByTestId('kpi-spend')).toHaveTextContent('Spend this month');
+    expect(screen.getByTestId('home-away')).toHaveTextContent('2 tasks done, 4 files changed.');
+    tab('progress');
     expect(screen.queryByTestId('home-portfolio')).toBeNull();
+    expect(screen.queryByTestId('home-goals')).toBeNull();
+    expect(screen.getByTestId('home-spend')).toBeInTheDocument();
+    expect(screen.getByTestId('home-upcoming')).toBeInTheDocument();
+    tab('activity');
     fireEvent.click(within(screen.getByTestId('home-artifacts')).getByRole('button', { name: /weekly\.md/ }));
     expect(onOpen).toHaveBeenCalledWith({ to: 'file', path: 'reports/weekly.md' });
   });
@@ -378,6 +444,7 @@ describe('HomeBoard — the portfolio (docs/work-tracking.md)', () => {
   ];
   it('shows the Now projects with progress, health and target; flagged ones carry their reasons; elsewhere-flagged follow; a row opens the project page', () => {
     const { onOpen } = board(fixture({ portfolio: { ...portfolio, nowProjects } }));
+    tab('progress');
     const sec = screen.getByTestId('home-portfolio');
     expect(screen.getByTestId('portfolio-counts').textContent).toBe('3 in Now, 2 next, 1 later');
     const rows = within(sec).getAllByTestId('portfolio-project');
@@ -392,16 +459,18 @@ describe('HomeBoard — the portfolio (docs/work-tracking.md)', () => {
     expect(rows[2].textContent).toContain('Update missing');
     expect(rows[2].textContent).toContain('Ask: an intro to the agency');
     expect(sec.textContent).toContain('Also flagged');
-    const digest = screen.getByTestId('portfolio-digest');
-    expect(digest.textContent).toContain('moved to now');
-    expect(digest.textContent).toContain('Tasks done');
     fireEvent.click(within(rows[0]).getByRole('button'));
     expect(onOpen).toHaveBeenCalledWith({ to: 'pane', pane: 'roadmap', focus: { kind: 'project', id: 'p1' } });
     fireEvent.click(within(sec).getByText('Open roadmap'));
     expect(onOpen).toHaveBeenCalledWith({ to: 'pane', pane: 'roadmap' });
+    tab('activity');
+    const digest = screen.getByTestId('portfolio-digest');
+    expect(digest.textContent).toContain('moved to now');
+    expect(digest.textContent).toContain('Tasks done');
   });
   it('an empty roadmap is one line and a call to action, not a strip of zeros', () => {
     const { onOpen } = board(fixture({ portfolio: { counts: { now: 0, next: 0, later: 0, atRisk: 0, offTrack: 0, updateMissing: 0, overBudget: 0, late: 0 }, exceptions: [], digest: [], doneByProject: [], nowProjects: [] } }));
+    tab('progress');
     const sec = screen.getByTestId('home-portfolio');
     expect(sec).toHaveTextContent('No project is in Now yet.');
     expect(within(sec).queryAllByTestId('portfolio-project')).toHaveLength(0);
@@ -411,7 +480,7 @@ describe('HomeBoard — the portfolio (docs/work-tracking.md)', () => {
   it('is absent without a portfolio, and a KR shows its projects\' health beside the RAG', () => {
     const data = fixture({ portfolio: null });
     data.goals[0].keyResults[0].projectHealth = 'at_risk';
-    board(data);
+    board(data, { tab: 'progress' });
     expect(screen.queryByTestId('home-portfolio')).toBeNull();
     expect(screen.getByTestId('kr-project-health').textContent).toBe('projects at risk');
   });

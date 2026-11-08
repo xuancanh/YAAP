@@ -84,25 +84,68 @@ The route is a GET, so a viewer of a shared workspace gets a Home too.
 *Redesigned 4 November 2026 as a command center: the old page was one long
 column of equal-weight sections led by a giant sentence.*
 
+### Tabs
+
+*Split into tabs 8 November 2026: one long page of every panel was too
+much to take in at a glance.*
+
+The header (greeting, company, mode, run state, the one-line summary)
+stays on top; under it four tabs, each its own address
+(`src/lib/routes.ts`, `HOME_TABS`):
+
+| Tab | Address | What it holds |
+|---|---|---|
+| **Overview** (default) | `/:company/home` | the state banners, the key numbers, the top of Needs you, unread messages from the team, and a short **While you were away** |
+| **Progress** | `/:company/home/progress` | Roadmap and Goals; Spend and health and Coming up beside them |
+| **Team** | `/:company/home/team` | the roster with every agent's state and errors; all messages from the team |
+| **Activity** | `/:company/home/activity` | Since you were here in full, Highlights and the full feed, Recent files |
+
+- The Overview answers questions 1 and 2 above; Progress answers 3; Team
+  and Activity are the closer look.
+- **Needs you on the Overview.** With a company it shows the top three
+  cards (same inline decisions) and **See all in Inbox** / **N more in the
+  Inbox**: the Inbox owns the full queue, so Home no longer repeats it.
+  Without a company (no Inbox) it keeps the top five and **N more** in
+  place.
+- **Messages on the Overview** are the unread ones only, at most three;
+  **All messages** opens the Team tab, which lists them all.
+- **While you were away** is the window ("Overnight", "Since yesterday"),
+  one line of counts (tasks done, decided without you, files changed), the
+  chief's brief shortened to its first bullets with **Read the brief**, and
+  the top four highlights. **Everything that happened** opens Activity.
+- The **Agents working** tile opens the Team tab (the tab's **All agents**
+  still opens the directory).
+- The tab strip counts what needs you on Overview and failing agents on
+  Team (amber), so a problem on another tab is visible from any tab.
+- Keyboard: the strip is a `tablist` with roving focus: Left and Right
+  move between tabs (wrapping), Home and End jump to the ends; the panel
+  is a `tabpanel` labelled by its tab.
+- Picking a tab is a history entry (Back returns to the previous tab);
+  reload and shared links land on the same tab. The tab is not remembered
+  per viewer: `/:company/home` is always the Overview, and going to Home
+  from elsewhere (the rail, the palette) opens the Overview. An unknown tab
+  in the address is the Overview.
+- An empty workspace (no agents yet) has no tabs (see "Without a company").
+
 **Layout.** A centred container (max 1360 px) on a 12-column grid. Wide
 (Home's own width 1040 px and up, measured with a `ResizeObserver` on the
-view, not the window) the main column takes 8 and the side column 4:
+view, not the window) each tab is a main column and a side column:
 
 ```
 [ header: greeting, company, mode, run state ]
-[ state banner, only when needed             ]
-[ key numbers: one strip of tiles            ]
-[ Needs you            ] [ Team              ]
-[ Messages             ] [ Goals             ]
-[ Roadmap              ] [ Coming up         ]
-[ Since you were here  ] [ Spend and health  ]
-[ Highlights           ] [ Recent files      ]
+[ Overview | Progress | Team | Activity      ]
+Overview:  [ banners ] [ key numbers ]
+           [ Needs you (7) ] [ While you were away (5) ]
+           [ Messages      ]
+Progress:  [ Roadmap, Goals (8) ] [ Spend and health, Coming up (4) ]
+Team:      [ Team (8)           ] [ Messages (4)                   ]
+Activity:  [ Since, Highlights (8) ] [ Recent files (4)            ]
 ```
 
-Narrower it is one column in priority order (needs, messages, team,
-roadmap, goals, since, coming up, highlights, spend, files); on a tablet
-the short side panels pair up two by two. On a phone (under 600 px) it is
-one column with a 16 px gutter and never scrolls sideways.
+Narrower each tab is one column in that order (on a tablet Progress pairs
+Goals with Spend and health). On a phone (under 600 px) it is one column
+with a 16 px gutter, the tab strip scrolls sideways on its own if it must,
+and the page never does.
 
 **The card system.** Every section is a panel: one radius (12 px), one
 border, one padding scale (16 px). Labels are small caps; titles strong;
@@ -359,11 +402,13 @@ first (`dayBuckets`, `SERIES_DAYS` in `home.service.ts`):
 
 ### Without a company
 
-Home is simpler without a company, in the same visual system: the
-greeting is the title; the key numbers are Needs you, Spend this month
-(with the token budget and a sparkline), Done, Blocked and Agents; then
-needs, team, what changed, coming up (loops due), highlights, spend and
-recent files. No roadmap, goals or pulse.
+Home is simpler without a company, in the same visual system and the
+same tabs: the greeting is the title; the key numbers are Needs you, Spend
+this month (with the token budget and a sparkline), Done, Blocked and
+Agents. Overview has every need (top five, the rest in place: there is no
+Inbox) and what changed; Progress has Spend and health and Coming up
+(loops due); Team and Activity as with a company. No roadmap, goals or
+pulse.
 
 A dashed line invites the owner to start a company, which opens the
 onboarding wizard. An empty workspace (no agents yet) gets **Start a

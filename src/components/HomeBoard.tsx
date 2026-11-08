@@ -4,19 +4,21 @@
  * props (an inline decision, a navigation), so web-tests render it with a
  * fixture and no store.
  *
- * Order is attention: a state banner when the company is paused or over its
- * envelope; one instrument strip of key numbers; what needs the owner, with
- * the team beside it; the roadmap and the goals; what happened since the
- * last visit (with the brief and what is coming up); the week's highlights;
- * recent files. Wide, it is a 12-column grid (main 8, side 4); narrower one
- * column in that order; on a phone one column with a 16 px gutter.
+ * Four tabs under the header (docs/home.md "Tabs"). The Overview is what the
+ * owner needs at a glance: a state banner when the company is paused or over
+ * its envelope, one instrument strip of key numbers, the top of Needs you
+ * (the Inbox has the rest), unread messages and a short "while you were
+ * away". Progress: roadmap, goals, spend and health, coming up. Team: the
+ * roster and every message. Activity: since the last visit, highlights and
+ * the full feed, recent files. Wide, each tab is a 12-column grid (a main
+ * and a side column); narrower one column; on a phone a 16 px gutter.
  *
  * One card system: a panel with one radius, one border and one padding
  * scale; small-caps section labels; strong titles; meta in the dim text
  * colour (never the faint one, which is too low-contrast to read); status
  * colours only where they mean something; numbers in tabular figures.
  */
-import { useState, type CSSProperties, type ReactNode } from 'react';
+import { useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import type { AgentMessage, HomeActivity, HomeAgent, HomeData, HomeGoal, HomeNeed, HomeNeedAction, HomeNowProject, PortfolioKind } from '../lib/api';
 import {
   activityFilters, activityRows, askedBy, briefSummary, dedupeUpcoming, defaultShort, filesLine, highlights, needBody, needHeadline, recommendationChip,
@@ -29,6 +31,7 @@ import { MentionText } from './MentionBox';
 import { I, P } from '../lib/icons';
 import { hopLine, managerHops } from '../lib/decisions';
 import { incidentCounts, incidentLine } from '../lib/org3';
+import { HOME_TABS, type HomeTab } from '../lib/routes';
 
 export interface HomeBoardProps {
   data: HomeData;
@@ -53,6 +56,10 @@ export interface HomeBoardProps {
   onMessage?: (m: AgentMessage) => void;
   /** Who may be tagged (docs/work-tracking.md "Mentions"): `@names` in snippets render as chips. */
   mentionables?: MentionCandidate[];
+  /** The tab on screen (docs/home.md "Tabs"); without it the board keeps its own, starting on the Overview. */
+  tab?: HomeTab;
+  /** A tab picked (the view writes it to the address). */
+  onTab?: (tab: HomeTab) => void;
 }
 
 // ---- tokens ----
@@ -71,6 +78,10 @@ const KIND_WORD: Record<PortfolioKind, string> = { off_track: 'Off track', tripp
 const KIND_COLOR: Record<PortfolioKind, string> = { off_track: 'var(--red)', tripped: 'var(--red)', update_missing: 'var(--amber)', at_risk: 'var(--amber)', over_budget: 'var(--amber)', late: 'var(--text-dim)' };
 const URGENCY_COLOR: Record<AgentMessage['urgency'], string> = { urgent: 'var(--red)', normal: 'var(--accent)', fyi: 'var(--text-dim)' };
 const NEEDS_SHOWN = 5;
+/** With a company the Overview shows the top few; the Inbox has them all. */
+const NEEDS_GLANCE = 3;
+const MESSAGES_GLANCE = 3;
+const AWAY_HIGHLIGHTS = 4;
 const TEAM_SHOWN = 8;
 const HIGHLIGHTS_SHOWN = 8;
 
@@ -112,6 +123,9 @@ const CSS = `
 .hm-skel { background: linear-gradient(90deg, var(--panel-2) 0%, var(--hover) 50%, var(--panel-2) 100%); background-size: 200% 100%; animation: hmShimmer 1.4s ease-in-out infinite; border-radius: 8px; }
 @keyframes hmShimmer { from { background-position: 100% 0 } to { background-position: -100% 0 } }
 @media (prefers-reduced-motion: reduce) { .hm-skel { animation: none; } .hm .hm-row, .hm .hm-tile { transition: none; } }
+.hm-tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); overflow-x: auto; scrollbar-width: none; margin-top: -4px; }
+.hm-tabs::-webkit-scrollbar { display: none; }
+.hm .hm-tabs .ibx-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
 `;
 
 // ---- primitives ----
@@ -271,7 +285,7 @@ function SpendMeter({ month, cap, projected, color }: { month: number; cap: numb
   );
 }
 
-function KpiStrip({ data, narrow, wide, now, onOpen, onAllAgents }: Pick<HomeBoardProps, 'data' | 'narrow' | 'wide' | 'onOpen' | 'onAllAgents'> & { now: Date }) {
+function KpiStrip({ data, narrow, wide, now, onOpen, onAgents }: Pick<HomeBoardProps, 'data' | 'narrow' | 'wide' | 'onOpen'> & { now: Date; onAgents: () => void }) {
   const c = data.company;
   const s = data.spend;
   const r = data.recap;
@@ -321,7 +335,7 @@ function KpiStrip({ data, narrow, wide, now, onOpen, onAllAgents }: Pick<HomeBoa
   tiles.push((span) => (
     <Kpi key="agents" span={span} testid="kpi-agents" label="Agents working" value={working} unit={`/ ${data.team.length}`}
       sub={failing ? <span style={{ color: 'var(--red)', fontWeight: 600 }}>{failing} failing</span> : data.team.length ? 'None failing' : 'No agents yet'}
-      onClick={onAllAgents} />
+      onClick={onAgents} />
   ));
   if (r.pulse && c) {
     const p = r.pulse;
@@ -414,7 +428,10 @@ function NeedRow({ n, now, narrow, busy, first, onAct, onOpen, mentionables = []
 
 function NeedsYou({ data, now, narrow, busy, onAct, onOpen, mentionables }: Pick<HomeBoardProps, 'data' | 'narrow' | 'onAct' | 'onOpen' | 'mentionables'> & { now: Date; busy: Set<string> }) {
   const [all, setAll] = useState(false);
-  const shown = all ? data.needs : data.needs.slice(0, NEEDS_SHOWN);
+  // A company has the Inbox, where every card waits: Home shows the top few
+  // and links the rest there. Without one, Home is the only list.
+  const inbox = Boolean(data.company);
+  const shown = all && !inbox ? data.needs : data.needs.slice(0, inbox ? NEEDS_GLANCE : NEEDS_SHOWN);
   const more = data.headline.needsYou - shown.length;
   return (
     <Panel id="needs" title="Needs you" count={data.headline.needsYou} flush
@@ -429,8 +446,8 @@ function NeedsYou({ data, now, narrow, busy, onAct, onOpen, mentionables }: Pick
           {shown.map((n, i) => <NeedRow key={n.id} n={n} now={now} narrow={narrow} first={i === 0} busy={busy.has(n.id)} onAct={onAct} onOpen={onOpen} mentionables={mentionables} />)}
           {more > 0 && (
             <div style={{ borderTop: '1px solid var(--border-soft)', padding: '10px 16px' }}>
-              <button className="hm-link" style={link} onClick={() => (data.needs.length > shown.length ? setAll(true) : onOpen({ to: 'inbox' }))}>
-                {more} more{data.needs.length > shown.length ? '' : ' in the Inbox'}
+              <button className="hm-link" style={link} onClick={() => (!inbox && data.needs.length > shown.length ? setAll(true) : onOpen({ to: 'inbox' }))}>
+                {more} more{!inbox && data.needs.length > shown.length ? '' : ' in the Inbox'}
               </button>
             </div>
           )}
@@ -445,14 +462,19 @@ function NeedsYou({ data, now, narrow, busy, onAct, onOpen, mentionables }: Pick
 /** What agents wrote to the owner with message_owner, unread first. The text
  *  is the agent's, shown as plain text (data, never markup); a row opens the
  *  direct chat, where the reply goes. Hidden when there is nothing. */
-function TeamMessages({ data, now, onOpen, onMessage, mentionables = [] }: Pick<HomeBoardProps, 'data' | 'onOpen' | 'onMessage' | 'mentionables'> & { now: Date }) {
+function TeamMessages({ data, now, onOpen, onMessage, mentionables = [], glance, onMore }: Pick<HomeBoardProps, 'data' | 'onOpen' | 'onMessage' | 'mentionables'> & { now: Date; glance?: boolean; onMore?: () => void }) {
   const m = data.messages;
-  if (!m || m.items.length === 0) return null;
+  // At a glance (the Overview): the unread ones only, the newest few.
+  const items = !m ? [] : glance ? m.items.filter((x) => !x.read).slice(0, MESSAGES_GLANCE) : m.items;
+  if (!m || items.length === 0) return null;
   const open = (x: AgentMessage) => (onMessage ? onMessage(x) : onOpen({ to: 'chat', sessionId: x.sessionId }));
+  const rest = m.items.length - items.length;
   return (
     <Panel id="messages" title="Messages from your team" count={m.unread} flush
-      action={data.company ? <button className="hm-link" style={link} onClick={() => onOpen({ to: 'inbox' })}>All in Inbox</button> : undefined}>
-      {m.items.map((x, i) => (
+      action={glance && onMore && rest > 0
+        ? <button className="hm-link" style={link} onClick={onMore}>All messages</button>
+        : data.company ? <button className="hm-link" style={link} onClick={() => onOpen({ to: 'inbox' })}>All in Inbox</button> : undefined}>
+      {items.map((x, i) => (
         <button key={x.id} data-testid={`home-message-${x.id}`} className="hm-row" onClick={() => open(x)}
           style={{ ...reset, display: 'flex', gap: 11, alignItems: 'flex-start', width: '100%', padding: '11px 16px', borderTop: i ? '1px solid var(--border-soft)' : 'none' }}>
           <Avatar emoji={x.emoji} colors={x.colors} size={28} />
@@ -749,6 +771,88 @@ function SinceHere({ data, now, onOpen }: Pick<HomeBoardProps, 'data' | 'onOpen'
   );
 }
 
+// ---- the Overview's short "while you were away" ----
+
+/** The Overview's recap: the window, the counts, the brief's first bullets and
+ *  the top highlights; the whole story is on the Activity tab. */
+function AwaySummary({ data, now, onOpen, onMore }: Pick<HomeBoardProps, 'data' | 'onOpen'> & { now: Date; onMore: () => void }) {
+  const r = data.recap;
+  const brief = r.brief ? briefSummary(r.brief.text) : null;
+  const top = highlights(data.activity).slice(0, AWAY_HIGHLIGHTS);
+  const facts: string[] = [`${r.tasksDone} ${r.tasksDone === 1 ? 'task' : 'tasks'} done`];
+  if (data.company) facts.push(`${r.decisionsCount} decided without you`);
+  facts.push(`${r.artifactsChanged} ${r.artifactsChanged === 1 ? 'file' : 'files'} changed`);
+  return (
+    <Panel id="away" title="While you were away" sub={sinceLabel(data.since, now, data.firstVisit)} flush
+      action={<button className="hm-link" style={link} onClick={onMore}>Everything that happened</button>}>
+      <div style={{ padding: '0 16px 12px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div data-testid="away-facts" style={{ ...meta, ...num, fontSize: 13 }}>{facts.join(', ')}.</div>
+        {r.brief && brief && (
+          <div data-testid="home-brief" style={{ borderLeft: '3px solid var(--accent)', paddingLeft: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 13, fontWeight: 650 }}>{data.company?.chiefName ? `${data.company.chiefName}'s brief` : 'The latest brief'}</span>
+              <span style={meta}>{when(r.brief.at, now)}</span>
+            </div>
+            <div style={{ fontSize: 13.5, lineHeight: 1.5 }}><Markdown text={brief.md} compact /></div>
+            <button className="hm-link" style={{ ...link, marginTop: 6 }} onClick={() => onOpen({ to: 'pane', pane: 'brief' })}>Read the brief</button>
+          </div>
+        )}
+        {!r.brief && top.length === 0 && <Empty>{data.company ? "Quiet so far. The chief of staff's brief arrives at the company's brief hour." : 'Quiet so far.'}</Empty>}
+      </div>
+      {top.length > 0 && (
+        <ol data-testid="away-highlights" style={{ listStyle: 'none', margin: 0, padding: 0, borderTop: '1px solid var(--border-soft)' }}>
+          {top.map((h, i) => <HighlightRow key={h.id} h={h} now={now} first={i === 0} onOpen={onOpen} />)}
+        </ol>
+      )}
+    </Panel>
+  );
+}
+
+// ---- the tabs ----
+
+const TAB_LABEL: Record<HomeTab, string> = { overview: 'Overview', progress: 'Progress', team: 'Team', activity: 'Activity' };
+
+/** Home's tabs: a tablist with roving focus (arrows, Home, End). */
+function Tabs({ tab, onTab, data }: { tab: HomeTab; onTab: (t: HomeTab) => void; data: HomeData }) {
+  const refs = useRef<Partial<Record<HomeTab, HTMLButtonElement | null>>>({});
+  const failing = data.team.filter((a) => a.state === 'error').length;
+  const hint: Record<HomeTab, string> = {
+    overview: 'What needs you, the key numbers and what happened',
+    progress: data.company ? 'Roadmap, goals, spend and health, what is coming up' : 'Spend and health, what is coming up',
+    team: 'Every agent and what it is doing, messages from your team',
+    activity: "Since your last visit, the week's highlights, every event, recent files",
+  };
+  const count: Partial<Record<HomeTab, { n: number; tone: string; label: string }>> = {};
+  if (data.headline.needsYou > 0) count.overview = { n: data.headline.needsYou, tone: 'strong', label: `${data.headline.needsYou} need you` };
+  if (failing > 0) count.team = { n: failing, tone: 'warn', label: `${failing} failing` };
+  const onKey = (e: KeyboardEvent<HTMLButtonElement>) => {
+    const i = HOME_TABS.indexOf(tab);
+    const to = e.key === 'ArrowRight' ? HOME_TABS[(i + 1) % HOME_TABS.length]
+      : e.key === 'ArrowLeft' ? HOME_TABS[(i - 1 + HOME_TABS.length) % HOME_TABS.length]
+        : e.key === 'Home' ? HOME_TABS[0] : e.key === 'End' ? HOME_TABS[HOME_TABS.length - 1] : null;
+    if (!to) return;
+    e.preventDefault();
+    onTab(to);
+    refs.current[to]?.focus();
+  };
+  return (
+    <div role="tablist" aria-label="Home" className="hm-tabs" data-testid="home-tabs">
+      {HOME_TABS.map((t) => {
+        const on = t === tab;
+        const c = count[t];
+        return (
+          <button key={t} ref={(el) => { refs.current[t] = el; }} role="tab" id={`home-tab-${t}`} aria-selected={on} aria-controls="home-tabpanel" tabIndex={on ? 0 : -1}
+            data-testid={`home-tab-${t}`} title={hint[t]} aria-label={c ? `${TAB_LABEL[t]}, ${c.label}` : TAB_LABEL[t]}
+            className={`ibx-tab${on ? ' on' : ''}`} onClick={() => onTab(t)} onKeyDown={onKey}>
+            {TAB_LABEL[t]}
+            {c && <span className={`ibx-count ${c.tone}`}>{c.n}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ---- 8. coming up ----
 
 function ComingUp({ data, now, onOpen }: Pick<HomeBoardProps, 'data' | 'onOpen'> & { now: Date }) {
@@ -1012,57 +1116,88 @@ export function HomeBoard(props: HomeBoardProps) {
   const { data, narrow, wide, name, onOpen, onAct, onAllAgents } = props;
   const now = props.now ?? new Date();
   const busy = props.busy ?? new Set<string>();
+  const [ownTab, setOwnTab] = useState<HomeTab>('overview');
+  const tab = props.tab ?? ownTab;
+  const onTab = (t: HomeTab) => { setOwnTab(t); props.onTab?.(t); };
   const nothingYet = data.team.length === 0;
   const pad = narrow ? '20px 16px 40px' : '28px 32px 56px';
   const needs = <NeedsYou key="needs" data={data} now={now} narrow={narrow} busy={busy} onAct={onAct} onOpen={onOpen} mentionables={props.mentionables} />;
-  const messages = <TeamMessages key="messages" data={data} now={now} onOpen={onOpen} onMessage={props.onMessage} mentionables={props.mentionables} />;
-  const team = <Team key="team" data={data} now={now} onOpen={onOpen} onAllAgents={onAllAgents} />;
-  const roadmap = <Roadmap key="roadmap" data={data} now={now} narrow={narrow} onOpen={onOpen} />;
-  const goals = <Goals key="goals" data={data} onOpen={onOpen} />;
-  const since = <SinceHere key="since" data={data} now={now} onOpen={onOpen} />;
-  const upcoming = <ComingUp key="upcoming" data={data} now={now} onOpen={onOpen} />;
-  const activity = <Activity key="activity" data={data} now={now} onOpen={onOpen} />;
   const spend = <SpendHealth key="spend" data={data} onOpen={onOpen} />;
-  const files = <Artifacts key="files" data={data} now={now} onOpen={onOpen} />;
   const pair = (key: string, a: ReactNode, b: ReactNode) => <div key={key} style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: GAP, alignItems: 'start' }}>{a}{b}</div>;
   const col = (children: ReactNode[], span?: string) => <div style={{ display: 'flex', flexDirection: 'column', gap: GAP, minWidth: 0, gridColumn: span }}>{children}</div>;
+  /** Wide: a main column and a side column; narrower: one column in the order given. */
+  const split = (main: ReactNode[], side: ReactNode[], at = 8, tablet?: ReactNode[]) => (wide
+    ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: GAP, alignItems: 'start' }}>{col(main, `span ${at}`)}{col(side, `span ${12 - at}`)}</div>
+    : col(!narrow && tablet ? tablet : [...main, ...side]));
+
+  const page = (): ReactNode => {
+    switch (tab) {
+      case 'overview': {
+        const messages = <TeamMessages key="messages" data={data} now={now} onOpen={onOpen} onMessage={props.onMessage} mentionables={props.mentionables} glance onMore={() => onTab('team')} />;
+        const away = <AwaySummary key="away" data={data} now={now} onOpen={onOpen} onMore={() => onTab('activity')} />;
+        return (
+          <>
+            <Banners data={data} narrow={narrow} onOpen={onOpen} />
+            {!data.company && props.onStartCompany && (
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', padding: '10px 14px', borderRadius: RADIUS, border: '1px dashed var(--border)', ...meta, fontSize: 13 }}>
+                <I d={P.building} size={15} style={{ color: 'var(--accent-hi)', flex: 'none' }} />
+                <span style={{ flex: 1, minWidth: 200 }}>Your agents work one by one. A chief of staff can run them as a company, with goals and a budget.</span>
+                <button className="hm-link" style={link} onClick={props.onStartCompany}>Start a company</button>
+              </div>
+            )}
+            <KpiStrip data={data} narrow={narrow} wide={wide} now={now} onOpen={onOpen} onAgents={() => onTab('team')} />
+            {split([needs, messages], [away], 7)}
+          </>
+        );
+      }
+      case 'progress': {
+        const upcoming = <ComingUp key="upcoming" data={data} now={now} onOpen={onOpen} />;
+        if (!data.company) return split([upcoming], [spend]);
+        const roadmap = <Roadmap key="roadmap" data={data} now={now} narrow={narrow} onOpen={onOpen} />;
+        const goals = <Goals key="goals" data={data} onOpen={onOpen} />;
+        return split([roadmap, goals], [spend, upcoming], 8, [roadmap, pair('goals-spend', goals, spend), upcoming]);
+      }
+      case 'team': {
+        const team = <Team key="team" data={data} now={now} onOpen={onOpen} onAllAgents={onAllAgents} />;
+        const messages = <TeamMessages key="messages" data={data} now={now} onOpen={onOpen} onMessage={props.onMessage} mentionables={props.mentionables} />;
+        return split([team], [messages]);
+      }
+      case 'activity': {
+        const since = <SinceHere key="since" data={data} now={now} onOpen={onOpen} />;
+        const activity = <Activity key="activity" data={data} now={now} onOpen={onOpen} />;
+        const files = <Artifacts key="files" data={data} now={now} onOpen={onOpen} />;
+        return split([since, activity], [files]);
+      }
+    }
+  };
+
   return (
     <div data-testid="home-board" className="hm" style={{ maxWidth: 1360, margin: '0 auto', padding: pad, display: 'flex', flexDirection: 'column', gap: narrow ? 16 : GAP, minWidth: 0, color: 'var(--text)' }}>
       <style>{CSS}</style>
       <Header data={data} narrow={narrow} name={name} onOpen={onOpen} now={now} />
-      <Banners data={data} narrow={narrow} onOpen={onOpen} />
-      {nothingYet && (
-        <div data-testid="home-start" style={{ border: '1px solid var(--border)', background: 'var(--panel)', borderRadius: RADIUS, padding: narrow ? '20px 16px' : '26px 28px', display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <span aria-hidden style={{ width: 38, height: 38, borderRadius: 10, background: tint('var(--accent)', 16), color: 'var(--accent-hi)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><I d={P.building} size={19} /></span>
-          <div style={{ fontSize: 17, fontWeight: 650 }}>Start a company with a Chief of Staff</div>
-          <div style={{ ...meta, fontSize: 13.5, maxWidth: 560 }}>Give it a vision and a monthly budget. The chief of staff proposes goals, hires specialists and brings you only the decisions that need you.</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
-            {props.onStartCompany && <button className="hm-btn" style={btn('primary', 'md')} onClick={props.onStartCompany}>Start a company</button>}
-            {props.onNewAgent && <button className="hm-plain" style={btn('plain', 'md')} onClick={props.onNewAgent}>Create one agent</button>}
-          </div>
-        </div>
-      )}
-      {!nothingYet && !data.company && props.onStartCompany && (
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', padding: '10px 14px', borderRadius: RADIUS, border: '1px dashed var(--border)', ...meta, fontSize: 13 }}>
-          <I d={P.building} size={15} style={{ color: 'var(--accent-hi)', flex: 'none' }} />
-          <span style={{ flex: 1, minWidth: 200 }}>Your agents work one by one. A chief of staff can run them as a company, with goals and a budget.</span>
-          <button className="hm-link" style={link} onClick={props.onStartCompany}>Start a company</button>
-        </div>
-      )}
-      {!nothingYet && <KpiStrip data={data} narrow={narrow} wide={wide} now={now} onOpen={onOpen} onAllAgents={onAllAgents} />}
       {nothingYet ? (
-        // An empty workspace: the start card leads; only what can already be true stays.
-        col([needs, spend])
-      ) : wide ? (
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(12, minmax(0, 1fr))', gap: GAP, alignItems: 'start' }}>
-          {col([needs, messages, roadmap, since, activity], 'span 8')}
-          {col([team, goals, upcoming, spend, files], 'span 4')}
-        </div>
-      ) : narrow ? (
-        col([needs, messages, team, roadmap, goals, since, upcoming, activity, spend, files])
+        // An empty workspace: the start card leads; only what can already be true stays. No tabs.
+        <>
+          <Banners data={data} narrow={narrow} onOpen={onOpen} />
+          <div data-testid="home-start" style={{ border: '1px solid var(--border)', background: 'var(--panel)', borderRadius: RADIUS, padding: narrow ? '20px 16px' : '26px 28px', display: 'flex', flexDirection: 'column', gap: 10 }}>
+            <span aria-hidden style={{ width: 38, height: 38, borderRadius: 10, background: tint('var(--accent)', 16), color: 'var(--accent-hi)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}><I d={P.building} size={19} /></span>
+            <div style={{ fontSize: 17, fontWeight: 650 }}>Start a company with a Chief of Staff</div>
+            <div style={{ ...meta, fontSize: 13.5, maxWidth: 560 }}>Give it a vision and a monthly budget. The chief of staff proposes goals, hires specialists and brings you only the decisions that need you.</div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 4 }}>
+              {props.onStartCompany && <button className="hm-btn" style={btn('primary', 'md')} onClick={props.onStartCompany}>Start a company</button>}
+              {props.onNewAgent && <button className="hm-plain" style={btn('plain', 'md')} onClick={props.onNewAgent}>Create one agent</button>}
+            </div>
+          </div>
+          {col([needs, spend])}
+        </>
       ) : (
-        // Tablet: one column in priority order; the short side panels pair up.
-        col([needs, messages, team, roadmap, data.company ? pair('goals-upcoming', goals, upcoming) : upcoming, since, activity, pair('spend-files', spend, files)])
+        <>
+          <Tabs tab={tab} onTab={onTab} data={data} />
+          <div role="tabpanel" id="home-tabpanel" aria-labelledby={`home-tab-${tab}`} data-testid={`home-panel-${tab}`}
+            style={{ display: 'flex', flexDirection: 'column', gap: narrow ? 16 : GAP, minWidth: 0 }}>
+            {page()}
+          </div>
+        </>
       )}
     </div>
   );

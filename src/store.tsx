@@ -19,7 +19,7 @@ import { isCompanySection, paneHome, LEGACY_COMPANY_SECTION, type CompanySection
 import { resolveAgentTab } from './lib/agent-tabs';
 import {
   agentTabSlug, companySlug, navOf, placeOf, readLocation, rememberCompanies, resolveCompany, routeHref, MEETING_EVENT,
-  type FoundryPlace, type MeetingEventDetail, type Place, type Route,
+  type FoundryPlace, type HomeTab, type MeetingEventDetail, type Place, type Route,
 } from './lib/routes';
 
 /** A workspace in the picker: one of ours, or one shared with us (then
@@ -272,6 +272,9 @@ interface Store {
    *  over whatever was open; src/lib/meetings.ts opens and closes it. */
   meetingId: string | null;
   inboxFilter: InboxFilter; setInboxFilter: (f: InboxFilter) => void;
+  /** Home's tab (`/<company>/home/<tab>`, docs/home.md "Tabs"); a history entry.
+   *  Going to Home from elsewhere opens the Overview. */
+  homeTab: HomeTab; setHomeTab: (t: HomeTab) => void;
   /** The Inbox row open in the reading pane (`/<company>/inbox/<filter>/<item>`);
    *  a history entry unless `replace` (moving with j/k replaces). Changing the
    *  filter closes it. */
@@ -440,6 +443,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [orgPane, setOrgPaneRaw] = useState<OrgPane | null>(boot.nav.orgPane ?? null);
   const [inboxFilter, setInboxFilterRaw] = useState<InboxFilter>(boot.nav.inboxFilter ?? 'all');
   const [inboxItem, setInboxItemRaw] = useState<string | null>(boot.nav.inboxItem ?? null);
+  const [homeTab, setHomeTabRaw] = useState<HomeTab>(boot.nav.homeTab ?? 'overview');
   const setInboxFilter = useCallback((f: InboxFilter) => { setInboxFilterRaw(f); setInboxItemRaw(null); }, []);
   const [routeTask, setRouteTaskRaw] = useState<string | null>(boot.nav.routeTask ?? null);
   const [routeProject, setRouteProjectRaw] = useState<string | null>(boot.nav.routeProject ?? null);
@@ -1042,6 +1046,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (n.orgPane !== undefined) setOrgPaneRaw(n.orgPane);
     if (n.inboxFilter) setInboxFilter(n.inboxFilter);
     if (n.inboxItem !== undefined) setInboxItemRaw(n.inboxItem);
+    if (n.homeTab) setHomeTabRaw(n.homeTab);
     if (n.settingsPane) setSettingsPaneRaw(n.settingsPane);
     if (n.routeTask !== undefined) setRouteTaskRaw(n.routeTask);
     if (n.routeProject !== undefined) setRouteProjectRaw(n.routeProject);
@@ -1469,6 +1474,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     markPush();
     const to = resolveSection(s);
     setSection(to);
+    if (to === 'overview') setHomeTabRaw('overview');
     if (isCompanySection(to)) setOrgPaneRaw(null);
     setRouteTaskRaw(null);
     setRouteProjectRaw(null);
@@ -1484,6 +1490,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // The setters views call to move within a section are navigations too.
   const setSettingsPane = useCallback((p: string) => { markPush(); setSettingsPaneRaw(p); }, [markPush]);
   const setHomeViewNav = useCallback((v: HomeView) => { markPush(); setHomeView(v); }, [markPush]);
+  const setHomeTab = useCallback((t: HomeTab) => { markPush(); setHomeTabRaw(t); }, [markPush]);
   const setSelectedAgentNav = useCallback((id: string | null) => { markPush(); setSelectedAgent(id); setAgentTabRaw(null); }, [markPush]);
   const setCurrentFileNav = useCallback((p: string | null) => { markPush(); setCurrentFile(p); }, [markPush]);
 
@@ -1497,10 +1504,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const href = useMemo(() => (company ? routeHref({
     company,
     place: placeOf({
-      section, homeView, currentId, currentChannel, selectedAgent, agentTab, fileTarget, currentFile, orgPane, inboxFilter, inboxItem, settingsPane,
+      section, homeView, homeTab, currentId, currentChannel, selectedAgent, agentTab, fileTarget, currentFile, orgPane, inboxFilter, inboxItem, settingsPane,
       routeTask, routeProject, routeProcess, meetingId, foundry, stacked, mobileChatOpen, mobileDetail,
     }),
-  }) : null), [company, section, homeView, currentId, currentChannel, selectedAgent, agentTab, fileTarget, currentFile, orgPane, inboxFilter, inboxItem, settingsPane, routeTask, routeProject, routeProcess, meetingId, foundry, stacked, mobileChatOpen, mobileDetail]);
+  }) : null), [company, section, homeView, homeTab, currentId, currentChannel, selectedAgent, agentTab, fileTarget, currentFile, orgPane, inboxFilter, inboxItem, settingsPane, routeTask, routeProject, routeProcess, meetingId, foundry, stacked, mobileChatOpen, mobileDetail]);
   useEffect(() => {
     const mode = navMode.current;
     navMode.current = null;
@@ -1599,7 +1606,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, setHireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, wsOrgLoading, orgPane, setOrgPane, settingsPane, setSettingsPane, openSettings, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, setInboxFilter, inboxItem, setInboxItem, orgFocus, setOrgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, wsOrgLoading, orgPane, setOrgPane, settingsPane, setSettingsPane, openSettings, orgUnitId, setOrgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, setInboxFilter, inboxItem, setInboxItem, orgFocus, setOrgFocus, homeTab, setHomeTab,
     routeTask, setRouteTask, routeProject, setRouteProject, routeProcess, setRouteProcess, setAgentTab, meetingId,
     channels, refreshChannels, currentChannel, channelFocus, setChannelFocus, openChannel, onWorkspaceEvent,
   }), [
@@ -1621,7 +1628,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     browserSteps, browserOpen, openBrowserPanel,
     computer, computerOpen, openComputerPanel,
     hireId, confirmHire,
-    companiesEnabled, wsOrg, refreshWsOrg, wsOrgLoading, orgPane, settingsPane, openSettings, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, setInboxFilter, inboxItem, setInboxItem, orgFocus,
+    companiesEnabled, wsOrg, refreshWsOrg, wsOrgLoading, orgPane, settingsPane, openSettings, orgUnitId, orgIntent, orgCadences, orgPendingPlans, orgHealth, orgHeldActions, orgMyTasks, followAttention, unreadMessages, openOrgTask, inboxFilter, setInboxFilter, inboxItem, setInboxItem, orgFocus, homeTab, setHomeTab,
     channels, refreshChannels, currentChannel, channelFocus, openChannel, onWorkspaceEvent,
   ]);
 

@@ -87,6 +87,28 @@ describe('reload and sharing', () => {
   });
 });
 
+describe('Home\'s tabs', () => {
+  it('a tab is its own address: reload lands on it, picking one is a history entry, Back returns, and Home from elsewhere opens the Overview', async () => {
+    await boot(`/${A}/home/team`);
+    expect([app!.section, app!.homeTab]).toEqual(['overview', 'team']);
+    expect(here()).toBe(`/${A}/home/team`);
+    const start = window.history.length;
+    act(() => { app!.setHomeTab('activity'); });
+    await waitFor(() => expect(here()).toBe(`/${A}/home/activity`));
+    expect(window.history.length).toBe(start + 1);
+    act(() => { app!.setHomeTab('overview'); });
+    await waitFor(() => expect(here()).toBe(`/${A}/home`));
+    await back();
+    await waitFor(() => expect(app!.homeTab).toBe('activity'));
+    expect(here()).toBe(`/${A}/home/activity`);
+    act(() => { app!.go('money'); });
+    await waitFor(() => expect(here()).toBe(`/${A}/money`));
+    act(() => { app!.go('overview'); });
+    await waitFor(() => expect(here()).toBe(`/${A}/home`));
+    expect(app!.homeTab).toBe('overview');
+  });
+});
+
 describe('navigating', () => {
   it('each navigation is a history entry with its address; Back restores the view', async () => {
     await boot(`/${A}/home`);

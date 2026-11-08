@@ -10,9 +10,16 @@ import { ORG_PANES_IN_ARTIFACTS, isCompanySection, isOrgPane, paneHome, LEGACY_C
 import { INBOX_FILTER_IDS, type InboxFilter } from './inbox';
 import { navFromUrl, foundryPlaceOf } from './market';
 
+/** Home's tabs (docs/home.md "Tabs"): `/<company>/home` is the Overview,
+ *  `/<company>/home/<tab>` the others. */
+export const HOME_TABS = ['overview', 'progress', 'team', 'activity'] as const;
+export type HomeTab = typeof HOME_TABS[number];
+export const isHomeTab = (v: unknown): v is HomeTab => typeof v === 'string' && (HOME_TABS as readonly string[]).includes(v);
+
 /** Where in a company the address points. */
 export type Place =
-  | { kind: 'home' }
+  /** `tab`: a Home tab other than the Overview (absent: the Overview). */
+  | { kind: 'home'; tab?: Exclude<HomeTab, 'overview'> }
   /** `item`: the row open in the Inbox's reading pane (a feed item id). */
   | { kind: 'inbox'; filter?: InboxFilter; item?: string }
   | { kind: 'chat' }
@@ -117,7 +124,11 @@ export function parseRoute(pathname: string, search = ''): Route | null {
 function parsePlace(head: string | undefined, rest: string[], search: string): Place {
   const [a, b] = rest;
   switch (head) {
-    case undefined: case 'home': case 'overview': return { kind: 'home' };
+    case undefined: case 'overview': return { kind: 'home' };
+    case 'home': {
+      const tab = a?.toLowerCase();
+      return isHomeTab(tab) && tab !== 'overview' ? { kind: 'home', tab } : { kind: 'home' };
+    }
     case 'inbox': {
       // `/inbox/:filter/:itemId` opens one row in the reading pane; `/inbox/all/:itemId` keeps it on the default tab.
       const filter = a && INBOX_IDS.has(a) && a !== 'all' ? a as InboxFilter : null;
@@ -157,7 +168,7 @@ export function routeHref(route: Route): string {
   const c = `/${enc(route.company)}`;
   const p = route.place;
   switch (p.kind) {
-    case 'home': return `${c}/home`;
+    case 'home': return `${c}/home${p.tab ? `/${p.tab}` : ''}`;
     case 'inbox': return `${c}/inbox${p.item ? `/${p.filter ?? 'all'}/${enc(p.item)}` : p.filter && p.filter !== 'all' ? `/${p.filter}` : ''}`;
     case 'chat': return `${c}/chat`;
     case 'channel': return `${c}/channels/${enc(p.slug)}${p.messageId ? `/${enc(p.messageId)}` : ''}`;
@@ -276,6 +287,8 @@ export function navigate(link: string, opts: { replace?: boolean } = {}): boolea
 /** The part of the store's state an address encodes. */
 export interface NavState {
   section: Section; homeView: HomeView;
+  /** Home's tab (absent in older callers: the Overview). */
+  homeTab?: HomeTab;
   currentId: string | null; currentChannel: string | null; selectedAgent: string | null; agentTab: string | null;
   fileTarget: FileTarget | null; currentFile: string | null;
   orgPane: OrgPane | null; inboxFilter: InboxFilter; settingsPane: string;
@@ -295,7 +308,7 @@ export function placeOf(s: NavState): Place {
   if (s.meetingId) return { kind: 'meeting', id: s.meetingId };
   const sec = s.section === 'workspace' ? LEGACY_COMPANY_SECTION : s.section;
   switch (sec) {
-    case 'overview': return { kind: 'home' };
+    case 'overview': return s.homeTab && s.homeTab !== 'overview' ? { kind: 'home', tab: s.homeTab } : { kind: 'home' };
     case 'agents': return { kind: 'agents' };
     case 'inbox': return { kind: 'inbox', ...(s.inboxFilter !== 'all' ? { filter: s.inboxFilter } : {}), ...(s.inboxItem ? { item: s.inboxItem } : {}) };
     case 'apps': return { kind: 'apps' };
@@ -335,7 +348,7 @@ export function navOf(place: Place): NavPatch {
   if (place.kind === 'meeting') return { meetingId: place.id };
   const base: NavPatch = { meetingId: null, routeTask: null, routeProject: null, routeProcess: null };
   switch (place.kind) {
-    case 'home': return { ...base, section: 'overview' };
+    case 'home': return { ...base, section: 'overview', homeTab: place.tab ?? 'overview' };
     case 'inbox': return { ...base, section: 'inbox', inboxFilter: place.filter ?? 'all', inboxItem: place.item ?? null };
     case 'chat': return { ...base, section: 'home', homeView: 'chat', mobileChatOpen: false };
     case 'channel': return { ...base, section: 'home', homeView: 'channel', currentChannel: place.slug, channelFocus: place.messageId ?? null, mobileChatOpen: true };

@@ -47,6 +47,9 @@ describe('parse and href', () => {
   const C = 'real-jong-cad9a8';
   const table: Array<[string, Place]> = [
     ['/c/home', { kind: 'home' }],
+    ['/c/home/progress', { kind: 'home', tab: 'progress' }],
+    ['/c/home/team', { kind: 'home', tab: 'team' }],
+    ['/c/home/activity', { kind: 'home', tab: 'activity' }],
     ['/c/inbox', { kind: 'inbox' }],
     ['/c/inbox/approvals', { kind: 'inbox', filter: 'approvals' }],
     ['/c/inbox/needs/need:approval:a1', { kind: 'inbox', filter: 'needs', item: 'need:approval:a1' }],
@@ -92,6 +95,11 @@ describe('parse and href', () => {
     expect(parseRoute('/c/market/kits')?.place).toEqual({ kind: 'foundry', shelf: 'kits' });
     expect(parseRoute('/c')?.place).toEqual({ kind: 'home' });
     expect(parseRoute('/c/what/ever')?.place).toEqual({ kind: 'home' });
+    // Home's tabs: the Overview is plain `/home`; an unknown tab is the Overview
+    expect(parseRoute('/c/home/overview')?.place).toEqual({ kind: 'home' });
+    expect(parseRoute('/c/home/Team')?.place).toEqual({ kind: 'home', tab: 'team' });
+    expect(parseRoute('/c/home/nope')?.place).toEqual({ kind: 'home' });
+    expect(parseRoute('/c/overview/team')?.place).toEqual({ kind: 'home' });
     expect(parseRoute('/c/tasks')?.place).toEqual({ kind: 'section', section: 'operations', pane: 'board' });
     expect(parseRoute('/c/channels/Bad Slug')?.place).toEqual({ kind: 'chat' });
   });
@@ -176,6 +184,9 @@ describe('the store state ⇄ the place', () => {
 
   it('names what is on screen', () => {
     expect(at({})).toEqual({ kind: 'home' });
+    expect(at({ homeTab: 'overview' })).toEqual({ kind: 'home' });
+    expect(at({ homeTab: 'activity' })).toEqual({ kind: 'home', tab: 'activity' });
+    expect(at({ section: 'inbox', homeTab: 'team' })).toEqual({ kind: 'inbox' });
     expect(at({ section: 'home', currentId: 's1', mobileChatOpen: true })).toEqual({ kind: 'session', id: 's1' });
     expect(at({ section: 'home', homeView: 'channel', currentChannel: 'general' })).toEqual({ kind: 'channel', slug: 'general' });
     expect(at({ section: 'home', homeView: 'agent', selectedAgent: 'a1', agentTab: 'memory' })).toEqual({ kind: 'agent', id: 'a1', tab: 'memory' });
@@ -206,13 +217,15 @@ describe('the store state ⇄ the place', () => {
     expect(navOf({ kind: 'settings', pane: 'company' })).toMatchObject({ section: 'settings', settingsPane: 'company', mobileDetail: true });
     expect(navOf({ kind: 'task', key: 'ENG-12' })).toMatchObject({ section: 'operations', orgPane: 'board', routeTask: 'ENG-12', orgFocus: { kind: 'task', id: 'ENG-12' }, mobileDetail: true });
     expect(navOf({ kind: 'chat' })).toMatchObject({ mobileChatOpen: false });
+    expect(navOf({ kind: 'home' })).toMatchObject({ section: 'overview', homeTab: 'overview' });
+    expect(navOf({ kind: 'home', tab: 'team' })).toMatchObject({ section: 'overview', homeTab: 'team' });
     // the room is shown over what was there: it sets nothing else
     expect(navOf({ kind: 'meeting', id: 'm1' })).toEqual({ meetingId: 'm1' });
   });
 
   it('round-trips every place that names a store state', () => {
     const places: Place[] = [
-      { kind: 'home' }, { kind: 'inbox', filter: 'plans' }, { kind: 'inbox', filter: 'mentions', item: 'event:e9' }, { kind: 'channel', slug: 'general' }, { kind: 'agents' },
+      { kind: 'home' }, { kind: 'home', tab: 'progress' }, { kind: 'home', tab: 'team' }, { kind: 'home', tab: 'activity' }, { kind: 'inbox', filter: 'plans' }, { kind: 'inbox', filter: 'mentions', item: 'event:e9' }, { kind: 'channel', slug: 'general' }, { kind: 'agents' },
       { kind: 'agent', id: 'a1', tab: 'work' }, { kind: 'agentFiles', id: 'a1', path: 'x.md' }, { kind: 'section', section: 'money', pane: 'spend' },
       { kind: 'task', key: 'ENG-1' }, { kind: 'project', key: 'P-1' }, { kind: 'artifacts', path: 'a/b.md' }, { kind: 'apps' },
       { kind: 'foundry', shelf: 'plugins' }, { kind: 'settings', pane: 'company' }, { kind: 'meeting', id: 'm1' },

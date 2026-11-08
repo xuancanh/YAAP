@@ -147,6 +147,7 @@ export function HomeView() {
         <HomeBoard
           data={data} narrow={narrow} wide={wide} name={name} busy={busy}
           onAct={(n, a) => { void onAct(n, a); }} onOpen={onOpen} onMessage={onMessage} onAllAgents={() => app.go('agents')} mentionables={mentionables}
+          tab={app.homeTab} onTab={app.setHomeTab}
           onStartCompany={app.companiesEnabled && isOwner && ws && !ws.shared ? () => setWizard(true) : undefined}
           onNewAgent={isOwner ? () => app.setNewAgentOpen(true) : undefined}
         />

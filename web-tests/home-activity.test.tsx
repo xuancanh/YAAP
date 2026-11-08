@@ -46,7 +46,7 @@ describe('Coming up, one row per thing', () => {
   it('renders words, not crons, and no duplicate rows', () => {
     const at = local(2026, 10, 6, 16);
     const data = { ...base(), upcoming: [ritual('1', 'Weekly review', at, ['Sales']), ritual('2', 'Weekly review', at, ['Engineering'])] };
-    render(<HomeBoard data={data} narrow={false} wide now={NOW} onAct={vi.fn()} onOpen={vi.fn()} onAllAgents={vi.fn()} />);
+    render(<HomeBoard data={data} narrow={false} wide now={NOW} onAct={vi.fn()} onOpen={vi.fn()} onAllAgents={vi.fn()} tab="progress" />);
     const section = screen.getByRole('region', { name: 'Coming up' });
     expect(within(section).getAllByText('Weekly review')).toHaveLength(1);
     expect(section.textContent).toContain('Sales, Engineering');
@@ -86,7 +86,7 @@ describe('Activity: routine runs collapsed', () => {
   });
   it('shows one line per agent and day, expandable, with the notable run described by what it did', () => {
     const onOpen = vi.fn();
-    render(<HomeBoard data={base()} narrow wide={false} now={NOW} onAct={vi.fn()} onOpen={onOpen} onAllAgents={vi.fn()} />);
+    render(<HomeBoard data={base()} narrow wide={false} now={NOW} onAct={vi.fn()} onOpen={onOpen} onAllAgents={vi.fn()} tab="activity" />);
     // Highlights leave routine runs out; the notable run stands alone
     const hl = screen.getByTestId('activity-highlights');
     expect(hl.textContent).not.toContain('heartbeat checks, nothing new');
