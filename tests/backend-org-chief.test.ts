@@ -62,6 +62,8 @@ function programTools(s: Awaited<ReturnType<typeof setup>>): OrgProgramTools {
 function qualityTools(s: Awaited<ReturnType<typeof setup>>): OrgQualityTools {
   const quality = new OrgQualityService(s.db, s.org, s.tasks, s.audit, s.approvals, s.agents, s.config, s.units, s.signals, s.incidents);
   return new OrgQualityTools(s.org, quality, s.tasks, s.config, s.units, s.runtime);
+}
+
 /** The CEO-alignment tools (docs/alignment.md) as the org module wires them. */
 function alignmentTools(s: Awaited<ReturnType<typeof setup>>): OrgAlignmentTools {
   return new OrgAlignmentTools(s.org, new OrgAlignmentService(s.db, s.org, s.tasks, s.approvals, s.audit, s.agents, s.workspaces, s.intent, s.runtime, s.units), s.config, s.runtime, s.turns);

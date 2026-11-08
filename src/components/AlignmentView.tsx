@@ -229,7 +229,7 @@ function ClassesCard({ classes }: { classes: OrgAlignmentClasses }) {
     <Card id="alignment-classes" title="What needs you here" action={<button className="co-link" onClick={() => setOpen(!open)}>{open ? 'Hide why' : 'Show why'}</button>}>
       <div className="co-rows" style={{ margin: '0 -10px' }} data-testid="alignment-classes">
         {classes.classes.map((c) => (
-          <div key={c.id} className="co-row" style={{ cursor: 'default' }}>
+          <div key={c.id} className="co-row static">
             <span className="co-row-main">
               <span className="co-row-title wrap">{c.label[0].toUpperCase() + c.label.slice(1)}</span>
               <span className="co-row-meta">{c.covers}</span>

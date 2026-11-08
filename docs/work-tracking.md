@@ -16,6 +16,12 @@ and the views built on it.
 
 ## 1. The model: one work graph with three levels
 
+What the graph builds toward is aligned first: an agent's vision, strategy,
+objective, key result or project bet is classified and, where it needs it,
+aligned with the CEO before tasks are created under it; operating work and
+capped discovery are exempt (`docs/alignment.md`).
+
+
 ```
 vision → objective → key result      (org_goals: intent, docs/company-vision.md §2)
                           │ 1..n

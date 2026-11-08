@@ -99,6 +99,7 @@ button.co-pill:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .co-row:hover { background: var(--hover); }
 .co-row.static { cursor: default; }
 .co-row.static:hover { background: none; }
+.co-row[aria-current="true"] { background: var(--accent-dim); }
 .co-row + .co-row { box-shadow: 0 -1px 0 var(--border-soft); }
 .co-row:hover + .co-row, .co-row + .co-row:hover { box-shadow: none; }
 .co-row-main { flex: 1; min-width: 0; }

@@ -130,7 +130,7 @@ describe('a company section rail', () => {
     orgOn({ section: 'direction' });
     render(<CompanyRail section="direction" />);
     const rail = screen.getByTestId('company-rail-direction');
-    expect(within(rail).getAllByRole('button').map((b) => b.textContent)).toEqual(['Overview', 'Vision', 'Goals', 'Roadmap', 'Decisions']);
+    expect(within(rail).getAllByRole('button').map((b) => b.textContent)).toEqual(['Overview', 'Vision', 'Alignment', 'Goals', 'Roadmap', 'Decisions']);
     const text = rail.textContent ?? '';
     for (const gone of ['Pending changes', 'Approvals', 'My tasks', 'Board', 'Incidents', 'Spend', 'Audit']) expect(text).not.toContain(gone);
     expect(screen.getByTestId('company-page-overview')).toHaveAttribute('aria-current', 'page');

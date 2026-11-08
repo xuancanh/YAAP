@@ -78,6 +78,13 @@ declines.
 | Proposes | new or retired rituals and what a ritual is for; the quarterly goal set; reallocations; reorganisations; the values → mechanism map; its own proxy level | charter; `org_propose_strategy`, `org_propose_experiment` (cadence, structure), decision cards; **`chief.proxyLevel` is a `propose`, non-delegable boundary row** |
 | Never | decide a one-way door; hire, fire or coach the leadership; commit money beyond an envelope; own the board or investor relationship; set culture-defining rules; send outward in the CEO's name; touch the auditor's settings or assure its own system | charter; boundary rows `never` and `propose (not delegable)`; the external floor |
 
+Alignment (`docs/alignment.md`) is the first stage of the chief's planning:
+the direction, the strategy and the OKRs are classified, briefed and aligned
+with the CEO (`ceo-alignment` playbook, `org_request_alignment`) before they
+are decomposed, and in an autonomous company the chief aligns the classes
+delegated to it (`org_align`) and spot-checks under- and over-escalation
+(`org_alignment_audit`).
+
 The proxy dial is the one new boundary row. Raising it widens what the chief
 does on the CEO's behalf, so it is earned one class at a time through the
 approvals record (report, "Conclusion"), never self-granted; a delegate
