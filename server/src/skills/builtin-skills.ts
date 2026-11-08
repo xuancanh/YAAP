@@ -132,7 +132,7 @@ export const BUILTIN_SKILLS: BuiltinSkill[] = [
 
 As the maker (org_request_review):
 1. Read what the task is held to: the "Quality standard" section of your run context, or org_quality task=<key>. Each criterion says which evidence counts (file, url, tool, action, check, task) or that it is judged.
-2. Cite, per criterion, references that exist: file:/org/… for what you wrote (add #sha256=<hex> when the exact version matters), url:https://… only for pages a tool of yours fetched during this task, tool:<tool name> for a tool you ran on it, action:<id> for an outward action, check:<n> for a passing task check, task:<key> for a finished dependency. evidence: [{ criterion: "<id>", refs: [...] }].
+2. Cite, per criterion, references that exist: file:<the path you wrote> for what you wrote (add #sha256=<hex> when the exact version matters), url:https://… only for pages a tool of yours fetched during this task, tool:<tool name> for a tool you ran on it, action:<id> for an outward action, check:<n> for a passing task check, task:<key> for a finished dependency. evidence: [{ criterion: "<id>", refs: [...] }].
 3. Every reference is verified without a model; one that does not exist refuses the whole submission, and the refusal names each gap. Fix the gap (do the missing work, save the file, fetch the source) — never cite something you did not do, and never retry the same call unchanged.
 4. A policy may block a call or a deliverable: the refusal says what to do instead. Do that. Only if the rule truly should not apply, org_policy_exception with the violation id and why.
 
