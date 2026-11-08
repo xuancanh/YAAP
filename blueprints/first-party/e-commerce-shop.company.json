@@ -334,7 +334,13 @@
     "model.budgetTightPct": 35,
     "model.historyDowngradeRate": 0.8,
     "model.historyEscalateRate": 0.4,
-    "model.historyMinRuns": 4
+    "model.historyMinRuns": 4,
+    "exec.maxSessions": 8,
+    "exec.maxParallel": 4,
+    "exec.planUsdCap": 2,
+    "exec.planTokenCap": 1500000,
+    "exec.idleRounds": 1,
+    "exec.orchestrateMinSignals": 3
   },
   "playbooks": [],
   "budget": {

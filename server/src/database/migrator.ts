@@ -2960,6 +2960,99 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_org_runs_tier ON org_runs ("orgId", "tier")`);
     },
   },
+  {
+    id: '0103-task-plans',
+    up: async (db) => {
+      // Task execution (docs/task-execution.md): a task's own plan (steps
+      // with dependencies, versioned), the sessions that worked it (master,
+      // lead continuations, workers), each step's latest result (UNIQUE
+      // plan/step makes claiming a step one conditional update) and the
+      // append-only log of versions, decisions and handoff packets. Idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS task_plans (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT,
+        "workspaceId" TEXT NOT NULL,
+        "agentId" TEXT NOT NULL,
+        "taskId" TEXT,
+        "scopeKey" TEXT NOT NULL,
+        "rootSessionId" TEXT NOT NULL,
+        "leadSessionId" TEXT,
+        "title" TEXT NOT NULL DEFAULT '',
+        "mode" TEXT NOT NULL DEFAULT 'single',
+        "dynamic" INTEGER NOT NULL DEFAULT 0,
+        "status" TEXT NOT NULL DEFAULT 'active',
+        "version" INTEGER NOT NULL DEFAULT 1,
+        "def" TEXT NOT NULL DEFAULT '{}',
+        "handoffPending" INTEGER NOT NULL DEFAULT 0,
+        "sessions" INTEGER NOT NULL DEFAULT 0,
+        "tokensIn" INTEGER NOT NULL DEFAULT 0,
+        "tokensOut" INTEGER NOT NULL DEFAULT 0,
+        "usd" REAL NOT NULL DEFAULT 0,
+        "idleRounds" INTEGER NOT NULL DEFAULT 0,
+        "note" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL,
+        "updatedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_plans_scope ON task_plans ("accountId", "scopeKey")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS task_plan_steps (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT,
+        "planId" TEXT NOT NULL,
+        "stepId" TEXT NOT NULL,
+        "status" TEXT NOT NULL DEFAULT 'pending',
+        "attempts" INTEGER NOT NULL DEFAULT 0,
+        "sessionId" TEXT,
+        "output" TEXT NOT NULL DEFAULT '',
+        "criteria" TEXT NOT NULL DEFAULT '[]',
+        "artifacts" TEXT NOT NULL DEFAULT '[]',
+        "questions" TEXT NOT NULL DEFAULT '[]',
+        "note" TEXT NOT NULL DEFAULT '',
+        "model" TEXT NOT NULL DEFAULT '',
+        "tokensIn" INTEGER NOT NULL DEFAULT 0,
+        "tokensOut" INTEGER NOT NULL DEFAULT 0,
+        "usd" REAL NOT NULL DEFAULT 0,
+        "startedAt" TEXT,
+        "endedAt" TEXT,
+        "updatedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_task_plan_steps_step ON task_plan_steps ("planId", "stepId")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS task_plan_sessions (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT,
+        "planId" TEXT NOT NULL,
+        "sessionId" TEXT NOT NULL,
+        "role" TEXT NOT NULL DEFAULT 'worker',
+        "stepId" TEXT,
+        "parentSessionId" TEXT,
+        "depth" INTEGER NOT NULL DEFAULT 0,
+        "status" TEXT NOT NULL DEFAULT 'running',
+        "model" TEXT NOT NULL DEFAULT '',
+        "tokensIn" INTEGER NOT NULL DEFAULT 0,
+        "tokensOut" INTEGER NOT NULL DEFAULT 0,
+        "usd" REAL NOT NULL DEFAULT 0,
+        "error" TEXT NOT NULL DEFAULT '',
+        "startedAt" TEXT NOT NULL,
+        "endedAt" TEXT
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_task_plan_sessions_plan ON task_plan_sessions ("planId")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_task_plan_sessions_session ON task_plan_sessions ("sessionId")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS task_plan_entries (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT,
+        "planId" TEXT NOT NULL,
+        "kind" TEXT NOT NULL,
+        "stepId" TEXT,
+        "sessionId" TEXT,
+        "body" TEXT NOT NULL DEFAULT '{}',
+        "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_task_plan_entries_plan ON task_plan_entries ("planId", "kind")`);
+    },
+  },
 ];
 
 /**

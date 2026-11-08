@@ -344,7 +344,13 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "model.historyDowngradeRate": 0.8,
     "model.historyEscalateRate": 0.4,
     "model.historyMinRuns": 4,
-    "model.requestCap": 2
+    "model.requestCap": 2,
+    "exec.maxSessions": 8,
+    "exec.maxParallel": 4,
+    "exec.planUsdCap": 2,
+    "exec.planTokenCap": 1500000,
+    "exec.idleRounds": 1,
+    "exec.orchestrateMinSignals": 3
    },
    "playbooks": [],
    "budget": {
@@ -663,7 +669,11 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "model.budgetTightPct": 10,
     "model.historyDowngradeRate": 0.97,
     "model.historyEscalateRate": 0.7,
-    "model.historyMinRuns": 6
+    "model.historyMinRuns": 6,
+    "exec.maxSteps": 16,
+    "exec.handoffAt": 0.6,
+    "exec.stepAttempts": 1,
+    "exec.splitCriteria": 3
    },
    "playbooks": [],
    "budget": {
@@ -1028,7 +1038,13 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "model.budgetTightPct": 35,
     "model.historyDowngradeRate": 0.8,
     "model.historyEscalateRate": 0.4,
-    "model.historyMinRuns": 4
+    "model.historyMinRuns": 4,
+    "exec.maxSessions": 8,
+    "exec.maxParallel": 4,
+    "exec.planUsdCap": 2,
+    "exec.planTokenCap": 1500000,
+    "exec.idleRounds": 1,
+    "exec.orchestrateMinSignals": 3
    },
    "playbooks": [],
    "budget": {
@@ -1358,7 +1374,17 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "model.budgetTightPct": 10,
     "model.historyDowngradeRate": 0.97,
     "model.historyEscalateRate": 0.7,
-    "model.historyMinRuns": 4
+    "model.historyMinRuns": 4,
+    "exec.maxSessions": 8,
+    "exec.maxParallel": 4,
+    "exec.maxSteps": 16,
+    "exec.planUsdCap": 2,
+    "exec.planTokenCap": 1500000,
+    "exec.handoffAt": 0.6,
+    "exec.stepAttempts": 1,
+    "exec.idleRounds": 1,
+    "exec.splitCriteria": 3,
+    "exec.orchestrateMinSignals": 3
    },
    "playbooks": [],
    "budget": {
@@ -1622,7 +1648,16 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "model.historyDowngradeRate": 0.97,
     "model.historyEscalateRate": 0.7,
     "model.historyMinRuns": 4,
-    "model.requestCap": 2
+    "model.requestCap": 2,
+    "exec.maxSessions": 8,
+    "exec.maxParallel": 4,
+    "exec.maxSteps": 16,
+    "exec.planUsdCap": 2,
+    "exec.planTokenCap": 1500000,
+    "exec.handoffAt": 0.6,
+    "exec.stepAttempts": 1,
+    "exec.splitCriteria": 3,
+    "exec.orchestrateMinSignals": 3
    },
    "playbooks": [],
    "budget": {
@@ -1815,7 +1850,11 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "model.budgetTightPct": 35,
     "model.historyDowngradeRate": 0.8,
     "model.historyEscalateRate": 0.4,
-    "model.historyMinRuns": 4
+    "model.historyMinRuns": 4,
+    "exec.maxSessions": 8,
+    "exec.planUsdCap": 2,
+    "exec.planTokenCap": 1500000,
+    "exec.orchestrateMinSignals": 3
    },
    "playbooks": [],
    "budget": {
@@ -2171,7 +2210,13 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "model.historyDowngradeRate": 0.97,
     "model.historyEscalateRate": 0.7,
     "model.historyMinRuns": 6,
-    "model.requestCap": 0
+    "model.requestCap": 0,
+    "exec.maxParallel": 2,
+    "exec.maxSteps": 16,
+    "exec.handoffAt": 0.6,
+    "exec.stepAttempts": 1,
+    "exec.splitCriteria": 3,
+    "exec.orchestrateMinSignals": 3
    },
    "playbooks": [],
    "budget": {

@@ -93,6 +93,9 @@ export const TOOL_CLASSES: Record<string, Classifier> = {
   set_chat_auto_archive: 'read',
   // agents message the owner (chats/owner-messages.service.ts): it only talks to the owner, in the agent's own DM — free
   message_owner: 'internal_write',
+  // task execution (org/task-plan.tools.ts, docs/task-execution.md): the task's own plan; a
+  // worker's calls are gated one by one in its own loop turn
+  task_plan: 'internal_write', task_step_run: 'internal_write', task_step_result: 'internal_write', task_handoff: 'internal_write',
   // code runner: a sandbox with no credentials; the workspace is what it writes
   run_js: 'internal_write', run_python: 'internal_write',
   // coding-agent CLIs (harness/harness.service.ts): execute code like run_js, in
@@ -153,6 +156,8 @@ export const FREE_INTERNAL_TOOLS: ReadonlySet<string> = new Set([
   // (docs/group-chat.md §9: rate-limited by discussion.agentDailyCap, members
   // only from the parent channel, closed only by its starter)
   'channel_make_task', 'channel_start_discussion', 'channel_close_discussion',
+  // the task's own plan (docs/task-execution.md): its steps, results and handoffs
+  'task_plan', 'task_step_run', 'task_step_result', 'task_handoff',
 ]);
 
 /** Whether a call is internal, reversible work that runs without a gate. */

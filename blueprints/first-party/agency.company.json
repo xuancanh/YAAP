@@ -243,7 +243,11 @@
     "model.budgetTightPct": 10,
     "model.historyDowngradeRate": 0.97,
     "model.historyEscalateRate": 0.7,
-    "model.historyMinRuns": 6
+    "model.historyMinRuns": 6,
+    "exec.maxSteps": 16,
+    "exec.handoffAt": 0.6,
+    "exec.stepAttempts": 1,
+    "exec.splitCriteria": 3
   },
   "playbooks": [],
   "budget": {

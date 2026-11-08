@@ -168,6 +168,9 @@ export type AutoActionListener = (ev: { orgId: string; action: AutoAction | 'tun
  *  incident; the runtime has already stopped the run. */
 export interface BreakerEvent { orgId: string; agentId: string; taskId: string; kind: 'loop' | 'no_progress' | 'budget_stop'; detail: string; sessionId?: string; scope?: string; refId?: string }
 export type BreakerListener = (ev: BreakerEvent) => Promise<void> | void;
+/** A task run settled (docs/task-execution.md: a handoff continues in the next run). */
+export interface RunEndEvent { orgId: string; taskId: string; agentId: string; sessionId: string; runId: string; status: string; outcome: string; reviewer: boolean; consulted: boolean; tokensIn: number; tokensOut: number; usd: number }
+export type RunEndListener = (ev: RunEndEvent) => Promise<void> | void;
 
 /** The manager's side of decision routing (OrgDecisionsService, docs/owners-seat.md §7). */
 export interface DecisionsPort {
@@ -261,6 +264,16 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
    *  it queued a run for, or null. */
   private nextWorkHook?: (org: Organization, agentId: string, now: Date) => Promise<string | null>;
   bindNextWork(fn: ((org: Organization, agentId: string, now: Date) => Promise<string | null>) | undefined): void { this.nextWorkHook = fn; }
+  /** Task execution (docs/task-execution.md): the session the owner's next
+   *  run of a task continues in after a handoff; null = the task's own. */
+  private taskSessionHook?: (orgId: string, taskId: string, agentId: string) => Promise<string | null>;
+  bindTaskSession(fn: ((orgId: string, taskId: string, agentId: string) => Promise<string | null>) | undefined): void { this.taskSessionHook = fn; }
+  private readonly runEndListeners: RunEndListener[] = [];
+  /** Told after every task run settles (its status, outcome and cost). */
+  onRunEnd(fn: RunEndListener): () => void {
+    this.runEndListeners.push(fn);
+    return () => { const i = this.runEndListeners.indexOf(fn); if (i >= 0) this.runEndListeners.splice(i, 1); };
+  }
   /** Whether a wake for this member is queued (any task). */
   hasPendingWakeFor(agentId: string, orgId?: string): boolean {
     for (const p of this.pendingWakes.values()) if (p.ev.agentId === agentId && (!orgId || p.ev.orgId === orgId)) return true;
@@ -1049,7 +1062,10 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
 
     const ws = await this.workspaces.get(org.workspaceId).catch(() => null);
     const name = `${SESSION_PREFIX}${org.name} · ${task.title.slice(0, 48)}`;
-    const existing = (await this.repo.listSessions(org.workspaceId)).find((s) => s.agentId === agentId && s.name === name);
+    // A task that handed off (docs/task-execution.md) continues in its fresh session.
+    const chainedId = !reviewer && !consulted && this.taskSessionHook ? await this.taskSessionHook(orgId, taskId, agentId).catch(() => null) : null;
+    const chained = chainedId ? await this.repo.getSession(chainedId).catch(() => null) : null;
+    const existing = chained ?? (await this.repo.listSessions(org.workspaceId)).find((s) => s.agentId === agentId && s.name === name);
     // The per-task session is linked to its task and starts with the agent's
     // auto-archive default (docs/chat-archiving.md); a session from before
     // the link existed is linked on its next run.
@@ -1101,6 +1117,7 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
     const outcome = killed ? 'killed' : interrupted ? 'interrupted' : ctx.loopDetected ? 'loop' : progressed ? (after.status === 'done' ? 'done' : 'progressed') : 'no_progress';
     await this.tasks.endRun(run.id, { status, outcome, tokensIn, tokensOut, usd, sessionId: session.id });
     await this.audit.append(orgId, { actor: `agent:${agentId}`, action: 'run_end', refType: 'run', refId: run.id, payload: { taskId, status, outcome, tokensIn, tokensOut, usd: Number(usd.toFixed(6)) } });
+    for (const fn of this.runEndListeners) await Promise.resolve(fn({ orgId, taskId, agentId, sessionId: session.id, runId: run.id, status, outcome, reviewer, consulted, tokensIn, tokensOut, usd })).catch(() => undefined);
 
     // Release the claim: a progressed owner run leaves the task in_progress
     // (the next comment-wake continues it); otherwise back to todo.

@@ -22,16 +22,20 @@ import { classOf } from '../server/src/actions/action-classes';
 import { connections as connectionsTable, workspaceMembers } from '../server/src/database/schema';
 import { newId } from '../server/src/common/ids.util';
 import { pageOf } from '../server/src/common/data-page';
+import { TaskPlanService } from '../server/src/org/task-plan.service';
+import { TaskPlanTools } from '../server/src/org/task-plan.tools';
 
 /** Measured before this change with the same harness (docs/agent-data-access.md §6). */
 const CHIEF_SPEC_BYTES_BEFORE = 59_543;
-/** The chief's whole tool list stays under this many bytes of JSON (raised from 66_000 when the process, quality and alignment tools joined it). */
-const CHIEF_SPEC_BUDGET = 68_000;
+/** The chief's whole tool list stays under this many bytes of JSON (raised from 66_000 when the process, quality and alignment tools joined it; to 70_000 with the four task-execution tools, measured here). */
+const CHIEF_SPEC_BUDGET = 70_000;
 
 async function setup(opts: { withData?: boolean } = {}) {
   const s = await harness();
   const projects = new OrgProjectsService(s.db, s.org, s.tasks, s.approvals, s.audit, s.agents, s.units, undefined, s.decisions);
   new OrgProjectsTools(s.org, projects, s.tasks, s.agents, s.config, s.runtime, s.turns);
+  // Task execution (docs/task-execution.md): offered to every agent session, the chief's included.
+  new TaskPlanTools(new TaskPlanService(s.db, s.repo, s.agents, s.org, s.tasks, s.turns, s.runtime), s.runtime, s.turns);
   let data: OrgDataTools | null = null;
   let ws: WorkspaceDataTools | null = null;
   let plugins: PluginsService | null = null;

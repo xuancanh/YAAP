@@ -3327,3 +3327,114 @@ export const orgProcessSuggestions = pgTable('org_process_suggestions', {
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 }, (t) => [uniqueIndex('idx_org_process_suggestions_key').on(t.orgId, t.key)]);
+// ---- task execution: a task's own plan and its sessions (docs/task-execution.md) ----
+
+/** One task's plan (a task-scoped mini workflow): the steps the performing
+ *  agent split its task into, how they run (single | sequential |
+ *  orchestrated), the current version and the running totals the caps read.
+ *  `scopeKey` is `task:<orgTaskId>` for a company task, `chat:<sessionId>`
+ *  for a request in a chat; `orgId` is null outside a company. */
+export const taskPlans = pgTable('task_plans', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId'),
+  workspaceId: text('workspaceId').notNull(),
+  agentId: text('agentId').notNull(),
+  taskId: text('taskId'),
+  scopeKey: text('scopeKey').notNull(),
+  /** The session that owns the plan (the master): the task's run session or the chat. */
+  rootSessionId: text('rootSessionId').notNull(),
+  /** The session the next run of a sequential task continues in (after a handoff). */
+  leadSessionId: text('leadSessionId'),
+  title: text('title').notNull().default(''),
+  /** single | sequential | orchestrated. */
+  mode: text('mode').notNull().default('single'),
+  /** 1 = the master chooses among available steps and may add steps as it goes. */
+  dynamic: integer('dynamic').notNull().default(0),
+  /** active | blocked | done | abandoned. */
+  status: text('status').notNull().default('active'),
+  version: integer('version').notNull().default(1),
+  /** JSON TaskPlanDef (task-plan-model.ts) of the current version. */
+  def: text('def').notNull().default('{}'),
+  /** 1 while a handoff packet waits for the next lead session to read it. */
+  handoffPending: integer('handoffPending').notNull().default(0),
+  sessions: integer('sessions').notNull().default(0),
+  tokensIn: integer('tokensIn').notNull().default(0),
+  tokensOut: integer('tokensOut').notNull().default(0),
+  usd: real('usd').notNull().default(0),
+  /** Consecutive step rounds that finished no step (the cross-session no-progress breaker). */
+  idleRounds: integer('idleRounds').notNull().default(0),
+  note: text('note').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt').notNull(),
+}, (t) => [uniqueIndex('idx_task_plans_scope').on(t.accountId, t.scopeKey)]);
+
+/** A step of a plan and its latest result. UNIQUE (plan, step): claiming a
+ *  step is one conditional UPDATE, so two masters never run it twice. */
+export const taskPlanSteps = pgTable('task_plan_steps', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId'),
+  planId: text('planId').notNull(),
+  stepId: text('stepId').notNull(),
+  /** pending | running | done | failed | skipped | interrupted. */
+  status: text('status').notNull().default('pending'),
+  attempts: integer('attempts').notNull().default(0),
+  /** The session that last worked it (a worker's, or the master's own). */
+  sessionId: text('sessionId'),
+  output: text('output').notNull().default(''),
+  /** JSON Array<{ criterion, met, evidence }>. */
+  criteria: text('criteria').notNull().default('[]'),
+  artifacts: text('artifacts').notNull().default('[]'),
+  questions: text('questions').notNull().default('[]'),
+  /** The master's note for a redo, shown on the next worker's card. */
+  note: text('note').notNull().default(''),
+  model: text('model').notNull().default(''),
+  tokensIn: integer('tokensIn').notNull().default(0),
+  tokensOut: integer('tokensOut').notNull().default(0),
+  usd: real('usd').notNull().default(0),
+  startedAt: text('startedAt'),
+  endedAt: text('endedAt'),
+  updatedAt: text('updatedAt').notNull(),
+}, (t) => [uniqueIndex('idx_task_plan_steps_step').on(t.planId, t.stepId)]);
+
+/** Every session a plan used: the master (or the lead of a sequential task
+ *  and its continuations) and the workers, with the tree (`parentSessionId`,
+ *  `depth`) and what each cost. */
+export const taskPlanSessions = pgTable('task_plan_sessions', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId'),
+  planId: text('planId').notNull(),
+  sessionId: text('sessionId').notNull(),
+  /** master | lead | worker. */
+  role: text('role').notNull().default('worker'),
+  stepId: text('stepId'),
+  parentSessionId: text('parentSessionId'),
+  depth: integer('depth').notNull().default(0),
+  /** running | done | failed | interrupted | handed_off. */
+  status: text('status').notNull().default('running'),
+  model: text('model').notNull().default(''),
+  tokensIn: integer('tokensIn').notNull().default(0),
+  tokensOut: integer('tokensOut').notNull().default(0),
+  usd: real('usd').notNull().default(0),
+  error: text('error').notNull().default(''),
+  startedAt: text('startedAt').notNull(),
+  endedAt: text('endedAt'),
+});
+
+/** The plan's append-only log: versions (definition, reason, diff), the
+ *  shared decision log every session honours, and the handoff packets. */
+export const taskPlanEntries = pgTable('task_plan_entries', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId'),
+  planId: text('planId').notNull(),
+  /** version | decision | handoff | event. */
+  kind: text('kind').notNull(),
+  stepId: text('stepId'),
+  sessionId: text('sessionId'),
+  /** JSON, by kind. */
+  body: text('body').notNull().default('{}'),
+  createdAt: text('createdAt').notNull(),
+});

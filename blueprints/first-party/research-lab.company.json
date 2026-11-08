@@ -236,7 +236,16 @@
     "model.historyDowngradeRate": 0.97,
     "model.historyEscalateRate": 0.7,
     "model.historyMinRuns": 4,
-    "model.requestCap": 2
+    "model.requestCap": 2,
+    "exec.maxSessions": 8,
+    "exec.maxParallel": 4,
+    "exec.maxSteps": 16,
+    "exec.planUsdCap": 2,
+    "exec.planTokenCap": 1500000,
+    "exec.handoffAt": 0.6,
+    "exec.stepAttempts": 1,
+    "exec.splitCriteria": 3,
+    "exec.orchestrateMinSignals": 3
   },
   "playbooks": [],
   "budget": {
