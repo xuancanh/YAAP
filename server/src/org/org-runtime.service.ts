@@ -106,6 +106,7 @@ import { CHIEF_PACK_ID } from './chief-os';
 import { taskRef } from '../common/task-keys';
 import { blockerSignature, describeBlockedOn, legacyBlockedOn, parseBlockedOn } from './blocked-on';
 import { workTunable } from './work-tunables';
+import { EVIDENCE_PROP } from './claims-model';
 import { parseMentionsJson } from './task-mentions.service';
 import { currentAccountId } from '../accounts/account-context';
 
@@ -1897,22 +1898,27 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
           const reasonText = (given.reason ?? '').trim() || why.trim();
           patch.blockedOn = { kind: given.kind || str('waitsOn') || legacyBlockedOn({ lines: [reasonText], since: '' }).kind, ref: given.ref ?? (str('ref') || null), reason: reasonText, until: given.until ?? (str('expectedBy') || null) };
         }
+        // Evidence-gated claims (docs/evidence.md): "done / sent / contacted N" in the note; refused before anything is written.
+        const claim = str('note') ? await this.tasks.evidence?.check(org.id, { cls: 'task_update', actor: `agent:${agentId}`, tool: 'org_task_update', text: str('note'), evidence: input.evidence, context: { taskId: t.id, projectId: t.projectId } }) : null;
         if (requested === 'abandoned' && !isChief) {
           await this.tasks.comment(org.id, t.id, { text: `Abandoned by its owner: ${why.trim()}`, fromAgentId: agentId, runId: ctx?.runId ?? null });
           this.bus?.emitOrgBoard({ orgId: org.id, kind: 'blocked', refId: t.id, detail: `"${t.title}" abandoned by its owner: ${why.trim().slice(0, 120)}` });
         }
-        if (str('note')) await this.tasks.comment(org.id, t.id, { text: str('note'), fromAgentId: agentId, runId: ctx?.runId ?? null, wake: isChief && t.assigneeAgentId !== agentId });
+        if (str('note')) { const c = await this.tasks.comment(org.id, t.id, { text: str('note'), fromAgentId: agentId, runId: ctx?.runId ?? null, wake: isChief && t.assigneeAgentId !== agentId }); await claim?.commit('task_comment', c.id); }
         const after = Object.keys(patch).length > 0 ? await this.tasks.update(org.id, t.id, patch, actor).catch((err: unknown) => { const m = err instanceof Error ? err.message : String(err); throw new Error(m.startsWith('refused') ? m : `refused: ${m}`); }) : t;
         if (ctx) ctx.progress = true;
         const b = after.status === 'blocked' || after.status === 'waiting' ? parseBlockedOn(after.blockedOn) : null;
-        return `Task ${taskRef(t)} updated${status ? ` → ${after.status}` : ''}${b ? ` (${describeBlockedOn(b, (_k, r) => names.get(r) ?? r.slice(0, 8))})` : ''}.`;
+        return `Task ${taskRef(t)} updated${status ? ` → ${after.status}` : ''}${b ? ` (${describeBlockedOn(b, (_k, r) => names.get(r) ?? r.slice(0, 8))})` : ''}.${claim ? ` ${claim.note}` : ''}`;
       }
       case 'org_task_comment': {
         const t = await taskOf();
         const notify = Array.isArray(input.notify) ? input.notify.map(String) : typeof input.notify === 'string' && input.notify ? [input.notify] : [];
+        // A comment that states progress is a task update (docs/evidence.md); its evidence goes on org_task_update.
+        const claim = await this.tasks.evidence?.check(org.id, { cls: 'task_update', actor: `agent:${agentId}`, tool: 'org_task_update (note)', text: str('text'), evidence: input.evidence, context: { taskId: t.id, projectId: t.projectId } }) ?? null;
         // @mentions (docs/work-tracking.md "Mentions"): a tag of someone who cannot see the task is refused.
         const posted = await this.tasks.comment(org.id, t.id, { text: str('text'), fromAgentId: agentId, runId: ctx?.runId ?? null, notify, strictMentions: true })
           .catch((err: unknown) => { const m = err instanceof Error ? err.message : String(err); throw new Error(m.startsWith('refused') ? m : `refused: ${m}`); });
+        await claim?.commit('task_comment', posted.id);
         if (ctx) ctx.progress = true;
         const d = posted.delivery;
         const who = (ids: string[]) => ids.map((id) => names.get(id) ?? id.slice(0, 8)).join(', ');
@@ -1923,7 +1929,8 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
           d.notified.length ? `notified ${d.notified.length} person${d.notified.length === 1 ? '' : 's'}` : '',
         ].filter(Boolean) : [];
         const lines = [ownerLine, ...tagged].filter(Boolean);
-        return lines.length ? `Comment posted; ${lines.join('; ')}.` : t.assigneeAgentId === agentId ? 'Comment posted on your task.' : 'Comment posted.';
+        const flagged = claim && !claim.counts ? ` ${claim.note}` : '';
+        return `${lines.length ? `Comment posted; ${lines.join('; ')}.` : t.assigneeAgentId === agentId ? 'Comment posted on your task.' : 'Comment posted.'}${flagged}`;
       }
       case 'org_request_review': {
         const t = await taskOf();
@@ -2031,10 +2038,15 @@ export class OrgRuntimeService implements OrgToolsHook, OnModuleInit, OnModuleDe
         if (currentValue !== undefined && !Number.isFinite(currentValue)) throw new Error('currentValue must be a number');
         if (currentValue === undefined && confidence === undefined) throw new Error('a check-in needs currentValue and/or confidence');
         if (g.metricSourceId && currentValue !== undefined && currentValue !== g.currentValue) throw new Error(`refused: [${g.id.slice(0, 8)}] is measured by a metric source — its value comes only from the source's samples (now ${fmtNum(g.currentValue)}). Check in your confidence and a note instead.`);
-        const { goal } = await this.intent.checkIn(org.id, g.id, { currentValue, confidence, note: str('note') }, actor);
+        // Evidence-gated claims (docs/evidence.md): a changed value is a claim.
+        const claim = currentValue !== undefined && currentValue !== g.currentValue
+          ? await this.tasks.evidence?.check(org.id, { cls: 'kr_checkin', actor: `agent:${agentId}`, tool: 'org_check_in', text: str('note'), value: currentValue, evidence: input.evidence, context: { goalId: g.id } })
+          : null;
+        const { goal, checkin } = await this.intent.checkIn(org.id, g.id, { currentValue, confidence, note: str('note') }, actor, { holdValue: claim ? !claim.counts : false });
+        await claim?.commit('checkin', checkin.id);
         if (ctx) ctx.progress = true;
         const p = paceOf(goal);
-        return `Check-in recorded on [${goal.id.slice(0, 8)}] "${goal.title}": ${goal.metric || 'value'} ${fmtNum(goal.currentValue)} of ${fmtNum(goal.targetValue)}${goal.unitLabel ? ` ${goal.unitLabel}` : ''}${goal.confidence !== null ? `, confidence ${Math.round(goal.confidence * 100)}%` : ''}; pace: ${p.pace}.`;
+        return `Check-in recorded on [${goal.id.slice(0, 8)}] "${goal.title}": ${goal.metric || 'value'} ${fmtNum(goal.currentValue)} of ${fmtNum(goal.targetValue)}${goal.unitLabel ? ` ${goal.unitLabel}` : ''}${goal.confidence !== null ? `, confidence ${Math.round(goal.confidence * 100)}%` : ''}; pace: ${p.pace}.${claim ? ` ${claim.counts ? '' : `The value ${fmtNum(currentValue)} is held, not counted. `}${claim.note}` : ''}`;
       }
       case 'org_set_key_result': {
         requireChiefOrLead();
@@ -2673,7 +2685,7 @@ const COMMON_TOOLS: AiToolSpec[] = [
   // Intent (docs/company-vision.md §2): read the tree, ask why, check in.
   { name: 'org_intent', description: 'Read the intent tree — vision → objectives → key results — with progress, pace (onPace | behind | unknown), owner confidence, at-risk flags, owners and due dates; the latest strategy memo heads it. A lead sees its unit by default; `unit` names another (chief).', inputSchema: { type: 'object', properties: { unit: { type: 'string' }, org: { type: 'string' } } } },
   { name: 'org_why', description: 'Why does this exist? The chain task → key result → objective → vision for a task (defaults to the one you were woken for) or a goal. A BROKEN chain (an abandoned goal, a cancelled task) means stop and ask before working it.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: TASK_REF }, goalId: { type: 'string' }, org: { type: 'string' } } } },
-  { name: 'org_check_in', description: 'Check in on a key result you own (or, as its manager or the chief, one of your unit\'s): the current value of its metric (not for a key result measured by a metric source — its value comes only from the source) and your confidence (0–1) that it will hit its target by the due date, with a one-line note. Weekly by default; the goal shows pace from it.', inputSchema: { type: 'object', properties: { goalId: { type: 'string', description: 'Defaults to the one key result you own.' }, currentValue: { type: 'number' }, confidence: { type: 'number', description: '0–1' }, note: { type: 'string' }, org: { type: 'string' } } } },
+  { name: 'org_check_in', description: 'Check in on a key result you own (or, as its manager or the chief, one of your unit\'s): the current value of its metric (not for a key result measured by a metric source — its value comes only from the source) and your confidence (0–1) that it will hit its target by the due date, with a one-line note. Weekly by default; the goal shows pace from it.', inputSchema: { type: 'object', properties: { goalId: { type: 'string', description: 'Defaults to the one key result you own.' }, currentValue: { type: 'number' }, confidence: { type: 'number', description: '0–1' }, note: { type: 'string' }, evidence: EVIDENCE_PROP, org: { type: 'string' } } } },
 ];
 
 /** The auditor's set (docs/company-vision.md §5.3): reads plus the two
@@ -2718,7 +2730,7 @@ const LEAD_TOOLS: AiToolSpec[] = [
 ];
 
 const TASK_TOOLS: AiToolSpec[] = [
-  { name: 'org_task_update', description: 'Update your task and keep it true: in_progress while you work it, blocked with what it waits on, abandoned with why it is no longer worth doing (the chief is told), todo to put it back; a note for the timeline, blockers. Tasks finish through org_request_review, never by setting done.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: `${TASK_REF} Defaults to the task you were woken for.` }, status: { type: 'string', enum: ['in_progress', 'blocked', 'todo', 'abandoned', 'backlog', 'cancelled'] }, note: { type: 'string', description: 'Required for blocked (or pass blockers) and abandoned: what it waits on, or why it is no longer worth doing.' }, blockers: { type: 'array', items: { type: 'string' } }, waitsOn: { type: 'string', enum: ['task', 'person', 'agent', 'manager', 'ceo', 'external', 'decision'], description: 'For blocked: who or what it waits on. task = another task (ref its key: the task waits and moves on when it is done); manager = your direct manager; ceo = a decision only the CEO can make (a card in Needs you); person = a human (ref their id); agent = a member (ref its name); decision = a pending decision card (ref its id); external = outside the company.' }, ref: { type: 'string', description: 'For blocked: the task key, member name, person id or card id it waits on.' }, expectedBy: { type: 'string', description: 'For blocked, optional: when you expect it to clear (a date); past it your heartbeat wakes you to chase it. Mostly for external blockers.' } } } },
+  { name: 'org_task_update', description: 'Update your task and keep it true: in_progress while you work it, blocked with what it waits on, abandoned with why it is no longer worth doing (the chief is told), todo to put it back; a note for the timeline, blockers. Tasks finish through org_request_review, never by setting done.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: `${TASK_REF} Defaults to the task you were woken for.` }, status: { type: 'string', enum: ['in_progress', 'blocked', 'todo', 'abandoned', 'backlog', 'cancelled'] }, note: { type: 'string', description: 'Required for blocked (or pass blockers) and abandoned: what it waits on, or why it is no longer worth doing.' }, blockers: { type: 'array', items: { type: 'string' } }, waitsOn: { type: 'string', enum: ['task', 'person', 'agent', 'manager', 'ceo', 'external', 'decision'], description: 'For blocked: who or what it waits on. task = another task (ref its key: the task waits and moves on when it is done); manager = your direct manager; ceo = a decision only the CEO can make (a card in Needs you); person = a human (ref their id); agent = a member (ref its name); decision = a pending decision card (ref its id); external = outside the company.' }, ref: { type: 'string', description: 'For blocked: the task key, member name, person id or card id it waits on.' }, expectedBy: { type: 'string', description: 'For blocked, optional: when you expect it to clear (a date); past it your heartbeat wakes you to chase it. Mostly for external blockers.' }, evidence: EVIDENCE_PROP } } },
   { name: 'org_task_comment', description: 'Comment on a task\'s timeline (a handoff note, a question, an answer). A comment on somebody else\'s task wakes its owner. Tag a member or a person with @Name in the text (or list them in notify) to bring them in: a tagged member is woken for the task with your comment and answers there, a tagged person is notified; both follow the task. Tag only the one who must act or answer — never to broadcast or cc. A tag of someone who cannot see the task (outside the company) is refused, and tags between agents stop waking after a few rounds until a person comments.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: TASK_REF }, text: { type: 'string', description: 'The comment; @Name tags a member or a person.' }, notify: { type: 'array', items: { type: 'string' }, description: 'Names (as you would write after @) to tag without writing them in the text.' } }, required: ['text'] } },
   { name: 'org_request_review', description: 'Hand your finished task to review: it moves to in_review and a reviewer other than you (preferring a different model family) is woken with the done_when rubric. When a quality standard applies, cite evidence for each of its criteria (a submission without real references is refused with what is missing).', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: TASK_REF }, note: { type: 'string', description: 'Where the result is and how it meets done_when.' }, evidence: { type: 'array', description: 'Per criterion of the quality standard: { criterion, refs } with refs like file:/org/x.md, url:https://… (fetched in this task), tool:web_search, action:<id>, check:1.', items: { type: 'object', properties: { criterion: { type: 'string' }, refs: { type: 'array', items: { type: 'string' } } } } } } } },
 ];

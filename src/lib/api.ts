@@ -1822,6 +1822,19 @@ export interface QualityOverview {
   recent: Array<QcResult & { taskKey: string | null; taskTitle: string }>;
   violations: PolicyViolation[];
 }
+// ---- evidence-gated claims (docs/evidence.md) ----
+
+export type ClaimStatus = 'verified' | 'unverified' | 'mismatch' | 'fabricated';
+export type ClaimRefType = 'checkin' | 'project_update' | 'task_comment' | 'decision' | 'minutes_decision' | 'step_output' | 'minutes_lesson' | 'refused';
+export interface OrgClaim {
+  id: string; orgId: string; classKey: 'kr_checkin' | 'project_update' | 'task_update' | 'decision' | 'step_output' | 'lesson'; refType: ClaimRefType; refId: string; agentId: string;
+  context: { taskId?: string; projectId?: string; goalId?: string; meetingId?: string }; statement: string; value: number | null; status: ClaimStatus; enforcement: 'block' | 'mark' | 'log';
+  refs: Array<QcEvidenceRef & { missing?: boolean }>; counts: Array<{ measure: string; n: number; phrase: string; measured: number; mismatch: boolean }>; detail: string;
+  verifiedBy: string; verifiedAt: string | null; createdAt: string;
+}
+export interface ClaimTally { verified: number; unverified: number; mismatch: number; fabricated: number; total: number }
+export interface ClaimsSummary { days: number; totals: ClaimTally; byAgent: Record<string, ClaimTally>; recent: OrgClaim[] }
+
 // ---- processes (docs/processes.md) ----
 
 export type ProcessMode = 'strict' | 'dynamic';
@@ -2734,6 +2747,10 @@ export const api = {
   createOrgPolicy: (wsId: string, body: Record<string, unknown>) => send<{ policy: OrgPolicy; applied: boolean }>(`/api/workspaces/${wsId}/org/quality/policies`, 'POST', body),
   reviseOrgPolicy: (wsId: string, ref: string, body: Record<string, unknown>) => send<{ policy: OrgPolicy; applied: boolean }>(`/api/workspaces/${wsId}/org/quality/policies/${enc(ref)}`, 'POST', body),
   runQualitySpotCheck: (wsId: string) => send<{ sampled: number; reverified: number; tasks: number; escapes: number }>(`/api/workspaces/${wsId}/org/quality/spot-check`, 'POST', {}),
+  // evidence-gated claims (docs/evidence.md §7)
+  orgClaims: (wsId: string, q: { refType?: ClaimRefType; refIds?: string[]; agentId?: string; status?: ClaimStatus; days?: number } = {}) => get<OrgClaim[]>(`/api/workspaces/${wsId}/org/claims?${new URLSearchParams(Object.entries({ ...q, refIds: q.refIds?.join(',') }).filter(([, v]) => v !== undefined && v !== '').map(([k, v]) => [k, String(v)])).toString()}`),
+  orgClaimsSummary: (wsId: string, days = 30) => get<ClaimsSummary>(`/api/workspaces/${wsId}/org/claims/summary?days=${days}`),
+  confirmOrgClaim: (wsId: string, claimId: string, note?: string) => send<OrgClaim>(`/api/workspaces/${wsId}/org/claims/${enc(claimId)}/confirm`, 'POST', { note }),
   // incidents, health, audit independence (item 29, docs/incidents.md §6)
   orgIncidents: (wsId: string, status?: IncidentStatus) => get<OrgIncident[]>(`/api/workspaces/${wsId}/org/incidents${status ? `?status=${status}` : ''}`),
   orgIncident: (wsId: string, incidentId: string) => get<OrgIncident>(`/api/workspaces/${wsId}/org/incidents/${enc(incidentId)}`),

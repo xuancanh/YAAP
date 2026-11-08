@@ -64,6 +64,10 @@ the kinds that would close it, and shows the call to make again; a bare "no"
 would make agents retry blindly. Deterministic **result policies** (§5) run
 here too, over the note and the text of the cited files.
 
+The same verifier (`OrgQualityService.verifyEvidence`) checks the evidence
+of claims written into shared state — key-result values, task and project
+updates, step outputs, facts in decisions — see [evidence.md](evidence.md).
+
 A passing submission opens the round's **QC result** (`org_qc_results`,
 outcome `pending`) with the evidence and the model-free checks, and posts one
 line on the timeline.
@@ -198,6 +202,8 @@ policy change on a card; speed and experimentation keep them lighter.
 - **Oversight › Quality** (`src/components/OrgQualityView.tsx`): the figures,
   standards (adopt a template), policies with their violations, recent QC
   results.
+  The Claims panel beside them counts unverified, contradicted and
+  fabricated claims per member ([evidence.md](evidence.md) §6).
 - **Task detail**: the QC result of each round — criteria, scores, notes and
   evidence links (workspace files open in the side panel).
 - **Inbox**: `quality_change` and `policy_exception` cards

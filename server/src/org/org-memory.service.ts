@@ -58,6 +58,7 @@ import { OrgPlaybooksService, parseRoles } from './org-playbooks.service';
 import { OrgKnowledgeService } from './org-knowledge.service';
 import { memoryTunable, postmortemTriggerOn, type PostmortemTrigger } from './memory-tunables';
 import { taskRef } from '../common/task-keys';
+import { EVIDENCE_PROP, claimTag } from './claims-model';
 
 const DAY_MS = 24 * 60 * 60_000;
 
@@ -78,7 +79,7 @@ const LESSON_TOOL: AiToolSpec = {
   name: 'meeting_propose_lesson',
   description: 'Propose a lesson for the minutes of this retro (docs/company-vision.md §6): one sentence the company should remember, with an audience — member (you), unit (this unit) or company (everyone). Optionally propose a charter change for a member (text to append to, or replace, their charter; the CEO approves it as a card showing the diff) and/or a playbook change (its owner gets a revise task). Executed when the meeting closes.',
   inputSchema: { type: 'object', properties: {
-    text: { type: 'string' }, audience: { type: 'string', enum: ['member', 'unit', 'company'] },
+    text: { type: 'string' }, audience: { type: 'string', enum: ['member', 'unit', 'company'] }, evidence: EVIDENCE_PROP,
     proposedCharterChange: { type: 'object', properties: { agent: { type: 'string', description: 'Member name.' }, text: { type: 'string', description: 'The charter text to add (or the whole new charter with mode replace).' }, mode: { type: 'string', enum: ['append', 'replace'] } }, required: ['agent', 'text'] },
     proposedPlaybookChange: { type: 'object', properties: { playbookId: { type: 'string', description: 'Playbook id, skill name or title.' }, note: { type: 'string' } }, required: ['playbookId', 'note'] },
   }, required: ['text', 'audience'] },
@@ -321,7 +322,10 @@ export class OrgMemoryService implements ToolProviderHook, OnModuleInit, OnModul
     if (!['member', 'unit', 'company'].includes(audience)) throw new Error('audience must be member, unit or company');
     ctx.minutes.lessons ??= [];
     if (ctx.minutes.lessons.length >= 20) throw new Error('the minutes already hold 20 lessons');
-    const lesson: MinutesLesson = { text: text.slice(0, 1_000), audience, by: ctx.agentId };
+    // Evidence-gated claims (docs/evidence.md): a shared lesson stated as fact; a member lesson is the author's own scratch.
+    const claim = audience === 'member' ? null : await this.tasks.evidence?.check(ctx.orgId, { cls: 'lesson', actor: `agent:${ctx.agentId}`, tool: 'meeting_propose_lesson', text, evidence: input.evidence, context: { meetingId: ctx.meeting.id } }) ?? null;
+    // The flag travels with the text into every memory it reaches.
+    const lesson: MinutesLesson = { text: `${claim && !claim.counts ? '(unverified) ' : ''}${text}`.slice(0, 1_000), audience, by: ctx.agentId };
     const cc = input.proposedCharterChange as Record<string, unknown> | undefined;
     if (cc && typeof cc === 'object') {
       const agent = str('agent', cc); const t = str('text', cc);
@@ -341,8 +345,9 @@ export class OrgMemoryService implements ToolProviderHook, OnModuleInit, OnModul
       lesson.proposedPlaybookChange = { playbookId: pb.id, note: note.slice(0, 2_000) };
     }
     ctx.minutes.lessons.push(lesson);
+    await claim?.commit('minutes_lesson', `${ctx.meeting.id}#${ctx.minutes.lessons.length - 1}`);
     await ctx.post(`Lesson (${audience}): ${text}${lesson.proposedCharterChange ? ` · proposes a charter change for ${(await this.agents.get(lesson.proposedCharterChange.agent).catch(() => null))?.name ?? 'a member'}` : ''}${lesson.proposedPlaybookChange ? ` · proposes a playbook change (${lesson.proposedPlaybookChange.playbookId.slice(0, 8)})` : ''}`);
-    return `Lesson recorded for the minutes (${ctx.minutes.lessons.length} so far). When the meeting closes it is written to the ${audience === 'member' ? 'your' : `${audience}'s`} lessons${lesson.proposedCharterChange ? ', the charter change goes to the CEO as a card with the diff' : ''}${lesson.proposedPlaybookChange ? ', the playbook owner gets a revise task' : ''}.`;
+    return `Lesson recorded for the minutes (${ctx.minutes.lessons.length} so far). When the meeting closes it is written to the ${audience === 'member' ? 'your' : `${audience}'s`} lessons${lesson.proposedCharterChange ? ', the charter change goes to the CEO as a card with the diff' : ''}${lesson.proposedPlaybookChange ? ', the playbook owner gets a revise task' : ''}.${claim ? ` ${claim.note}` : ''}`;
   }
 
   /** The materialise step for lessons: the lessons store per audience, a
@@ -487,7 +492,8 @@ export class OrgMemoryService implements ToolProviderHook, OnModuleInit, OnModul
         if (str('unit') && !unitId) throw new Error(`no unit "${str('unit')}"`);
         const rows = await this.knowledge.searchDecisions(org.id, str('q'), { unitId: unitId ?? null, limit: Math.min(50, Number(input.limit) || 20) });
         if (rows.length === 0) return str('q') ? `No decision matches "${str('q')}".` : 'The decision log is empty.';
-        return rows.map((d) => `- [decision:${d.id}] ${d.createdAt.slice(0, 16).replace('T', ' ')} "${d.title}": ${d.decision.slice(0, 300)}${d.alternatives ? ` · alternatives: ${d.alternatives.slice(0, 160)}` : ''}${d.rationale ? ` · because: ${d.rationale.slice(0, 200)}` : ''} — ${d.decidedBy}${d.meetingId ? `, meeting ${d.meetingId.slice(0, 8)}` : d.approvalId ? `, approval ${d.approvalId.slice(0, 8)}` : ''}`).join('\n');
+        const flags = await this.tasks.evidence?.flags(org.id, 'decision', rows.map((d) => d.id)).catch(() => null);
+        return rows.map((d) => `- [decision:${d.id}]${flags?.has(d.id) ? ` ${claimTag(flags.get(d.id))}` : ''} ${d.createdAt.slice(0, 16).replace('T', ' ')} "${d.title}": ${d.decision.slice(0, 300)}${d.alternatives ? ` · alternatives: ${d.alternatives.slice(0, 160)}` : ''}${d.rationale ? ` · because: ${d.rationale.slice(0, 200)}` : ''} — ${d.decidedBy}${d.meetingId ? `, meeting ${d.meetingId.slice(0, 8)}` : d.approvalId ? `, approval ${d.approvalId.slice(0, 8)}` : ''}`).join('\n');
       }
       case 'org_recall': {
         if (!isChief) throw new Error('org_recall is a chief-of-staff tool');

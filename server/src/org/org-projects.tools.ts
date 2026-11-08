@@ -41,6 +41,7 @@ import { OrgProjectTeamsService } from './org-project-teams.service';
 import { BLOCKED_KINDS, describeBlockedOn, legacyBlockedOn, parseBlockedOn } from './blocked-on';
 import { PROJECT_HEALTH, PROJECT_LANES, parseSteps } from './work-model';
 import { taskRef } from '../common/task-keys';
+import { EVIDENCE_PROP, claimTag } from './claims-model';
 
 const PROJECT_REF = 'The project key as the roadmap shows it, e.g. P-3 (an id prefix or the exact title also works).';
 const TASK_REF = 'The task key as the board shows it, e.g. ENG-12.';
@@ -65,7 +66,7 @@ const TOOLS: AiToolSpec[] = [
   { name: 'org_project', description: 'One project (read-only): its brief, key results, milestones, health history, appetite and spend, forecast, blockers and tasks by status.', inputSchema: { type: 'object', properties: { project: { type: 'string', description: PROJECT_REF }, org: { type: 'string' } }, required: ['project'] } },
   { name: 'org_create_project', description: 'Propose a project — the middle level between a key result and tasks. It names the key result(s) it moves, a lead, a brief (problem, hypothesis, done_when, MVP) and an appetite (days and/or USD it is worth, not an estimate). It starts as proposed (shaped once the brief and appetite are filled) in Next or Later; asking for lane "now" sends the CEO a decision card (the betting table). Create tasks under it with org_create_task projectId.', inputSchema: { type: 'object', properties: { ...PROJECT_FIELDS }, required: ['title', 'goalIds', 'brief'] } },
   { name: 'org_update_project', description: 'Change a project you lead (or that a report of yours leads; the chief: any): title, brief, lead, key results, dates, milestones, lane Next/Later, status done. Moving it to Now, cancelling a Now project or raising its appetite becomes the CEO\'s decision (a card) or, for an appetite within your share as the lead\'s manager, applies at once.', inputSchema: { type: 'object', properties: { project: { type: 'string', description: PROJECT_REF }, ...PROJECT_FIELDS, status: { type: 'string', enum: ['proposed', 'shaped', 'paused', 'done', 'cancelled'] }, updateCadenceDays: { type: 'number', description: 'Days between health updates for this project (default: the company tunable).' } }, required: ['project'] } },
-  { name: 'org_project_update', description: 'Post the health update of a project you lead: on_track; at_risk with the ask (the support you need and from whom); off_track with the reason. "Unknown, still investigating" is a fine reason — never invent a story. Optional hill (0–1: 0–0.5 still figuring it out, 0.5–1 making it happen) and a short narrative. The diff since the last update (dates, scope, spend, tasks done) is added for you.', inputSchema: { type: 'object', properties: { project: { type: 'string', description: PROJECT_REF }, health: { type: 'string', enum: [...PROJECT_HEALTH] }, reason: { type: 'string' }, ask: { type: 'string' }, hill: { type: 'number' }, body: { type: 'string' }, org: { type: 'string' } }, required: ['project', 'health'] } },
+  { name: 'org_project_update', description: 'Post the health update of a project you lead: on_track; at_risk with the ask (the support you need and from whom); off_track with the reason. "Unknown, still investigating" is a fine reason — never invent a story. Optional hill (0–1: 0–0.5 still figuring it out, 0.5–1 making it happen) and a short narrative. The diff since the last update (dates, scope, spend, tasks done) is added for you.', inputSchema: { type: 'object', properties: { project: { type: 'string', description: PROJECT_REF }, health: { type: 'string', enum: [...PROJECT_HEALTH] }, reason: { type: 'string' }, ask: { type: 'string' }, hill: { type: 'number' }, body: { type: 'string' }, evidence: EVIDENCE_PROP, org: { type: 'string' } }, required: ['project', 'health'] } },
   { name: 'org_milestone', description: 'Add a milestone to a project you lead (name + date), or update one (by its id like m2, its number or its name): rename, re-date, or mark it done.', inputSchema: { type: 'object', properties: { project: { type: 'string', description: PROJECT_REF }, add: { type: 'string', description: 'Name of a new milestone.' }, milestone: { type: 'string', description: 'An existing milestone to change.' }, date: { type: 'string', description: 'YYYY-MM-DD.' }, done: { type: 'boolean' }, name: { type: 'string' }, org: { type: 'string' } }, required: ['project'] } },
   { name: 'org_project_appetite', description: 'Decide a project whose appetite is used up (its circuit breaker paused new task claims), as the lead\'s manager: extend (by extendDays / extendUsd; within work.extendShare of the original appetite it applies at once, beyond it goes to the CEO), cut_scope (a small extension; the lead cancels or moves out what does not fit) or kill (always the CEO\'s: a card).', inputSchema: { type: 'object', properties: { project: { type: 'string', description: PROJECT_REF }, decision: { type: 'string', enum: ['extend', 'cut_scope', 'kill'] }, extendDays: { type: 'number' }, extendUsd: { type: 'number' }, note: { type: 'string' }, org: { type: 'string' } }, required: ['project', 'decision'] } },
   { name: 'org_link_task', description: 'Move a task to the project it serves (an orphan out of Unsorted, or a task filed under the wrong project). Its owner, its owner\'s managers, either project\'s lead or the chief may.', inputSchema: { type: 'object', properties: { taskId: { type: 'string', description: TASK_REF }, project: { type: 'string', description: PROJECT_REF }, org: { type: 'string' } }, required: ['taskId', 'project'] } },
@@ -169,13 +170,16 @@ export class OrgProjectsTools implements ToolProviderHook {
       case 'org_project': {
         const page = await wrap(() => this.projects.page(org.id, str('project')));
         const p = page.project;
+        // Evidence-gated claims (docs/evidence.md): the latest health update's facts, flagged when nothing verified them.
+        const latest = page.updates[0];
+        const flag = latest ? (await this.tasks.evidence?.flags(org.id, 'project_update', [latest.id]).catch(() => null))?.get(latest.id) : undefined;
         return [
           `${p.key} "${p.title}" — ${p.lane}/${p.status}, lead ${p.lead.name}${p.unitName ? `, unit ${p.unitName}` : ''}.`,
           p.goals.length ? `Moves: ${p.goals.map((g) => `[${g.id.slice(0, 8)}] ${g.title}`).join('; ')}` : 'Moves: no key result linked (link one with org_update_project goalIds).',
           `Brief — problem: ${p.brief.problem || '?'}; hypothesis: ${p.brief.hypothesis || '?'}; done when: ${p.brief.done_when || '?'}; MVP: ${p.brief.mvp || '?'}`,
           `Dates: ${p.startDate ?? '?'} → ${p.targetDate ?? 'no target'}; milestones: ${p.milestones.map((m) => `${m.id} ${m.name}${m.date ? ` (${m.date})` : ''}${m.done ? ' ✓' : ''}`).join('; ') || 'none'}`,
           `Progress: ${p.progress.done}/${p.progress.total} tasks; hill ${p.hill ?? '?'}${p.hillInferred ? ' (inferred)' : ''}; forecast: ${p.forecast.state === 'range' ? `${p.forecast.p50} (50%) – ${p.forecast.p85} (85%)` : p.forecast.note}`,
-          `Health: ${p.health || 'no update yet'}${p.healthReason ? ` — ${p.healthReason}` : ''}${p.healthAsk ? ` · ask: ${p.healthAsk}` : ''}; update ${p.update.state}${p.update.dueAt ? ` (due ${p.update.dueAt.slice(0, 10)})` : ''}`,
+          `Health: ${p.health || 'no update yet'}${p.healthReason ? ` — ${p.healthReason}` : ''}${p.healthAsk ? ` · ask: ${p.healthAsk}` : ''}${flag ? ` ${claimTag(flag)} — check before building on it` : ''}; update ${p.update.state}${p.update.dueAt ? ` (due ${p.update.dueAt.slice(0, 10)})` : ''}`,
           `Appetite: ${describeAppetite(p.appetite)}${p.appetite.tripped ? ' — BREAKER TRIPPED: claims paused' : ''}`,
           page.blockers.length ? `Blockers: ${page.blockers.map((b) => `${b.key ?? b.taskId.slice(0, 8)} ${b.text}`).join('; ')}` : 'Blockers: none',
           this.teams ? await this.teams.describe(org.id, p.id).catch(() => '') : '',
@@ -204,10 +208,13 @@ export class OrgProjectsTools implements ToolProviderHook {
         return r.note;
       }
       case 'org_project_update': {
+        // Evidence-gated claims (docs/evidence.md): the facts its reason and narrative state.
+        const claim = await this.tasks.evidence?.check(org.id, { cls: 'project_update', actor, tool: 'org_project_update', text: [str('reason'), str('body')].filter(Boolean).join('. '), evidence: input.evidence, context: { projectId: (await wrap(() => this.projects.resolve(org.id, str('project')))).id } }) ?? null;
         const row = await wrap(() => this.projects.postUpdate(org.id, str('project'), { health: str('health'), reason: str('reason'), ask: str('ask'), body: str('body'), hill: num('hill') ?? null }, actor));
+        await claim?.commit('project_update', row.id);
         progressed();
         const diff = JSON.parse(row.diff) as { done?: number; spentUsd?: number; scope?: number };
-        return `Health update posted (${row.health.replace('_', ' ')}). Since the last one: ${diff.done ?? 0} task(s) done, scope ${diff.scope ?? 0}, spend $${(diff.spentUsd ?? 0).toFixed(2)}.`;
+        return `Health update posted (${row.health.replace('_', ' ')}). Since the last one: ${diff.done ?? 0} task(s) done, scope ${diff.scope ?? 0}, spend $${(diff.spentUsd ?? 0).toFixed(2)}.${claim ? ` ${claim.note}` : ''}`;
       }
       case 'org_milestone': {
         const p = str('add')

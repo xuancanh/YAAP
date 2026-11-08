@@ -88,6 +88,7 @@ const TUNABLE_ROWS: Array<{ prefix: string; verdict: BoundaryVerdict; reason: st
   { prefix: 'incidents.', verdict: 'propose', reason: 'containment levels are the safety floor after an incident', delegable: true },
   { prefix: 'acceptance.', verdict: 'propose', reason: 'acceptance settings decide what counts as verified work', delegable: true },
   { prefix: 'quality.', verdict: 'propose', reason: 'evidence, verifier independence, the pass bar and spot checks decide what counts as verified work', delegable: true },
+  { prefix: 'claims.', verdict: 'propose', reason: 'how strictly claims need evidence and when fabrication escalates decide what counts as a fact in shared state', delegable: true },
   { prefix: 'policy.', verdict: 'propose', reason: 'how policies are approved and when violations escalate is the owner\'s oversight of the rules', delegable: true },
   { prefix: 'signals.', verdict: 'propose', reason: 'signal thresholds decide what the owner and the auditor get to see', delegable: true },
   { prefix: 'pulse.', verdict: 'propose', reason: 'pulse weights decide how health is reported to the owner', delegable: true },

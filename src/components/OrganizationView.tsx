@@ -22,6 +22,7 @@ import { spendWindowLabel } from '../lib/company-dash';
 import { UsageBars, UsageRows } from './UsageChart';
 import { I, P } from '../lib/icons';
 import { card, input, btn, pill, h2, faint, ago, useAgentNames, useUnits, useFollowRef, Avatar, DecisionExtras } from './org-ui';
+import { ClaimBadge, useClaims } from './OrgClaimsView';
 import { PluginPanels } from './PluginUi';
 import { Bar as KitBar, Card as KitCard, Empty as KitEmpty, InfoButton, Menu, Metric, Owner, PageHeader, PageSkeleton, Pill, SearchBox, SkeletonRows } from './CompanyKit';
 import { actorWords, auditCategory, auditSentence, filterAudit, AUDIT_CATEGORY_LABEL, type AuditFilter } from '../lib/oversight';
@@ -616,6 +617,8 @@ function TaskDrawer({ org, task, members, onClose, reload, board }: { org: OrgDe
   const app = useApp();
   const names = useAgentNames();
   const [comments, setComments] = useState<OrgMessage[]>([]);
+  // Evidence-gated claims (docs/evidence.md): each update's verified / unverified badge.
+  const claims = useClaims(org.workspaceId, 'task_comment', comments.filter((c) => c.fromAgentId).map((c) => c.id));
   const [runs, setRuns] = useState<OrgRun[]>([]);
   const [text, setText] = useState('');
   const [note, setNote] = useState('');
@@ -719,7 +722,7 @@ function TaskDrawer({ org, task, members, onClose, reload, board }: { org: OrgDe
           {comments.map((c) => { const a = c.fromAgentId ? names.get(c.fromAgentId) : undefined; const who = a?.name ?? (c.fromUserId && c.fromUserId !== app.me?.actorId ? app.nameOf(c.fromUserId) : 'You'); return (
             <div key={c.id} data-testid="task-comment" style={{ display: 'flex', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--border-soft)' }}>
               {a ? <Avatar a={a} size={18} /> : <span style={{ fontSize: 14 }}>🧑‍💼</span>}
-              <div style={{ flex: 1, minWidth: 0 }}><div style={faint}>{who} · {ago(c.createdAt)}</div><div style={{ fontSize: 12.5, overflowWrap: 'anywhere' }}><Markdown text={c.text} compact mentions={storedMentions(c.mentions, mentionables)} /></div></div>
+              <div style={{ flex: 1, minWidth: 0 }}><div style={faint}>{who} · {ago(c.createdAt)} <ClaimBadge claim={claims.get(c.id)} /></div><div style={{ fontSize: 12.5, overflowWrap: 'anywhere' }}><Markdown text={c.text} compact mentions={storedMentions(c.mentions, mentionables)} /></div></div>
             </div>); })}
           <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
             <MentionBox value={text} onChange={setText} members={mentionables} ariaLabel="Comment" placeholder="Comment — wakes the owner · @ to tag a member or a person" style={input}

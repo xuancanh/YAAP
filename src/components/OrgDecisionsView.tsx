@@ -8,7 +8,8 @@
  *  related). On a phone the list and the record are one column. */
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../store';
-import { api, type OrgDecision, type OrgDetail, type OrgMeeting } from '../lib/api';
+import { api, type OrgClaim, type OrgDecision, type OrgDetail, type OrgMeeting } from '../lib/api';
+import { ClaimBadge, useClaims } from './OrgClaimsView';
 import { decidedByLabel, decisionSource, MEETING_KIND_TITLES } from '../lib/org';
 import { decisionLine, filterDecisions, groupByDay, plural, reversibilityOf, SOURCE_LABEL, type DecisionFilter } from '../lib/direction';
 import { Markdown } from '../lib/md';
@@ -33,6 +34,8 @@ export function DecisionsPane({ org }: { org: OrgDetail }) {
   const [related, setRelated] = useState<OrgDecision | null>(null);
   const [f, setF] = useState<DecisionFilter>({ q: '', source: 'all', decider: 'all', since: 'all', link: 'all' });
   const unitId = isCompany ? null : current?.id ?? null;
+  // Evidence-gated claims (docs/evidence.md): the facts a decision rests on, verified or not.
+  const claims = useClaims(wsId, 'decision', (rows ?? []).map((d) => d.id));
   const refresh = useCallback(async () => {
     const [d, m] = await Promise.all([api.orgDecisions(wsId, unitId).catch((): OrgDecision[] => []), api.orgMeetings(wsId).catch((): OrgMeeting[] => [])]);
     setRows(d); setMeetings(new Map(m.map((x) => [x.id, x])));
@@ -132,7 +135,7 @@ export function DecisionsPane({ org }: { org: OrgDetail }) {
                 </div>
               )}
               {selected && (!app.stacked || sel) && (
-                <DecisionRecord d={selected} by={by(selected)} meeting={selected.meetingId ? meetings.get(selected.meetingId) : undefined} unitName={selected.unitId ? (byId.get(selected.unitId)?.name ?? null) : null}
+                <DecisionRecord d={selected} claim={claims.get(selected.id)} by={by(selected)} meeting={selected.meetingId ? meetings.get(selected.meetingId) : undefined} unitName={selected.unitId ? (byId.get(selected.unitId)?.name ?? null) : null}
                   onBack={app.stacked ? () => setSel(null) : undefined} onRelated={() => setRelated(selected)} />
               )}
             </div>
@@ -142,7 +145,7 @@ export function DecisionsPane({ org }: { org: OrgDetail }) {
   );
 }
 
-function DecisionRecord({ d, by, meeting, unitName, onBack, onRelated }: { d: OrgDecision; by: string; meeting?: OrgMeeting; unitName: string | null; onBack?: () => void; onRelated: () => void }) {
+function DecisionRecord({ d, claim, by, meeting, unitName, onBack, onRelated }: { d: OrgDecision; claim?: OrgClaim; by: string; meeting?: OrgMeeting; unitName: string | null; onBack?: () => void; onRelated: () => void }) {
   const app = useApp();
   const openMeeting = useOpenMeeting();
   const { kind, line } = decisionLine(d);
@@ -160,6 +163,7 @@ function DecisionRecord({ d, by, meeting, unitName, onBack, onRelated }: { d: Or
         <Pill tone={SOURCE_TONE[src]} plain>{SOURCE_LABEL[src]}</Pill>
         {kind && <Pill plain>{kind[0].toUpperCase() + kind.slice(1)}</Pill>}
         {unitName && <Pill plain>{unitName}</Pill>}
+        <ClaimBadge claim={claim} />
         <span style={{ flex: 1 }} />
         <CopyRef text={`#decision:${d.id.slice(0, 8)}`} />
       </div>

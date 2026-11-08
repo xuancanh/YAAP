@@ -85,6 +85,8 @@ interface Snapshot {
   pending: Array<{ holder: string }>;
   /** Live resource requests (docs/work-tracking.md "Resource requests"): open, hiring, granted, escalated, and recent answers. */
   requests: Array<{ id: string; projectId: string; pmAgentId: string | null; headAgentId: string | null; role: string; allocation: number; status: string }>;
+  /** Recent claims nothing verified (docs/evidence.md): others must check before building on them. */
+  claims: Array<{ agentId: string; statement: string; status: string }>;
   /** Goals with their owners (objectives and key results), for the program line. */
   owned: Array<{ id: string; kind: string; ownerAgentId: string | null; unitId: string | null }>;
 }
@@ -230,6 +232,7 @@ export class OrgBriefingService implements ToolProviderHook {
       decisions, pending, requests,
       owned: goals.filter((g) => (g.kind === 'objective' || g.kind === 'key_result') && g.status === 'active').map((g) => ({ id: g.id, kind: g.kind, ownerAgentId: g.ownerAgentId, unitId: g.unitId })),
       capabilities: this.capabilities ? clip(await this.capabilities(org.workspaceId).catch(() => ''), 160) : '',
+      claims: await this.tasks.evidence?.unverified(orgId, { days: 14, limit: 10 }).catch(() => []) ?? [],
     };
     this.snaps.set(orgId, snap);
     return snap;
@@ -459,6 +462,13 @@ function briefingText(s: Snapshot, v: View, agentId: string, unreadMentions: num
   // Decisions in the viewer's units (company-level ones are everyone's).
   const decisions = s.decisions.filter((d) => d.unitId === null || v.units.has(d.unitId)).slice(0, 3);
   if (decisions.length) add(2, `Recent decisions: ${decisions.map((d) => `"${clip(d.title, 60)}" (${day(d.createdAt)})`).join('; ')}.`);
+
+  // Unverified claims in shared state (docs/evidence.md): facts not to build on unchecked.
+  if (s.claims.length) {
+    const others = s.claims.filter((c) => c.agentId !== agentId);
+    const own = s.claims.length - others.length;
+    add(1, `Unverified claims (${s.claims.length}${s.claims.length >= 10 ? '+' : ''}): ${others.slice(0, 2).map((c) => `${nm(c.agentId)}: "${clip(c.statement, 50)}"${c.status === 'verified' || c.status === 'unverified' ? '' : ` (${c.status})`}`).join('; ')}${others.length > 2 ? '; …' : ''}${others.length ? ' — check the record before building on them' : ''}${own ? `${others.length ? '; ' : ''}${own} of yours: write again with evidence` : ''}.`);
+  }
 
   // Waiting on it.
   const cards = s.pending.filter((a) => a.holder === `agent:${agentId}` || (v.isChief && a.holder === 'chief')).length;

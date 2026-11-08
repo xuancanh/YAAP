@@ -2840,6 +2840,24 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_org_service_requests_status ON org_service_requests ("orgId", "status")`);
     },
   },
+  {
+    id: '0099-claims',
+    up: async (db) => {
+      // Evidence-gated claims (docs/evidence.md): what an agent wrote into
+      // shared state, the evidence it cited (verified model-free), the
+      // counts checked against the record and the verdict. New table only;
+      // idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS org_claims (
+        "accountId" TEXT NOT NULL DEFAULT 'single', "id" TEXT PRIMARY KEY, "orgId" TEXT NOT NULL, "classKey" TEXT NOT NULL,
+        "refType" TEXT NOT NULL, "refId" TEXT NOT NULL, "agentId" TEXT NOT NULL, "context" TEXT NOT NULL DEFAULT '{}',
+        "statement" TEXT NOT NULL DEFAULT '', "value" REAL, "status" TEXT NOT NULL DEFAULT 'unverified', "enforcement" TEXT NOT NULL DEFAULT 'mark',
+        "refs" TEXT NOT NULL DEFAULT '[]', "counts" TEXT NOT NULL DEFAULT '[]', "detail" TEXT NOT NULL DEFAULT '',
+        "verifiedBy" TEXT NOT NULL DEFAULT '', "verifiedAt" TEXT, "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_claims_ref ON org_claims ("orgId", "refType", "refId")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_claims_agent ON org_claims ("orgId", "agentId", "createdAt")`);
+    },
+  },
 ];
 
 /**

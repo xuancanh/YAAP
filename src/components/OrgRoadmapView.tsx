@@ -41,6 +41,7 @@ import { I, P } from '../lib/icons';
 
 const DAY_MS = 86_400_000;
 import { keyStyle } from '../lib/task-keys';
+import { ClaimBadge, useClaims } from './OrgClaimsView';
 
 type View = 'timeline' | 'board';
 
@@ -329,8 +330,10 @@ export interface ProjectPageHandlers {
   onOpenTask: (taskId: string) => void;
 }
 
-export function ProjectPageView({ page, program, ...h }: { page: ProjectPage; program?: ProgramItem | null } & ProjectPageHandlers) {
+export function ProjectPageView({ page, program, wsId, ...h }: { page: ProjectPage; program?: ProgramItem | null; wsId?: string } & ProjectPageHandlers) {
   const p = page.project;
+  // Evidence-gated claims (docs/evidence.md): each health update's verified / unverified badge.
+  const claims = useClaims(wsId ?? '', 'project_update', page.updates.map((u) => u.id));
   const [editing, setEditing] = useState(false);
   const [posting, setPosting] = useState(false);
   const [msName, setMsName] = useState('');
@@ -405,10 +408,12 @@ export function ProjectPageView({ page, program, ...h }: { page: ProjectPage; pr
         {page.updates.length === 0 && <div style={faint}>No health update yet. The lead posts one on its cadence.</div>}
         {page.updates.map((u) => {
           const diff = (() => { try { return JSON.parse(u.diff) as { done?: number; scope?: number; spentUsd?: number; blocked?: number }; } catch { return {}; } })();
+          const claim = claims.get(u.id);
           return (
             <div key={u.id} data-testid="health-update" style={{ borderTop: '1px solid var(--border-soft)', padding: '8px 0' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5 }}>
                 <HealthDot health={u.health} /><b style={{ color: healthColor(u.health) }}>{healthWord(u.health)}</b>
+                <ClaimBadge claim={claim} />
                 <span style={faint}>{u.createdAt.slice(0, 10)} · {ago(u.createdAt)}</span>
               </div>
               {u.reason && <div style={{ fontSize: 12.5, marginTop: 2 }}>{u.reason}</div>}
@@ -654,7 +659,7 @@ function ProjectPane({ wsId, projectId, onBack }: { wsId: string; projectId: str
   if (!page) return <div>{err ? <div role="alert" className="co-alert">{err}</div> : <PageSkeleton cards={4} />}<button className="co-btn" style={{ marginTop: 10 }} onClick={onBack}>Back to roadmap</button></div>;
   const id = page.project.id;
   return (
-    <ProjectPageView page={page} program={matrix?.items.find((i) => i.refType === 'project' && i.id === id) ?? null} onBack={onBack}
+    <ProjectPageView wsId={wsId} page={page} program={matrix?.items.find((i) => i.refType === 'project' && i.id === id) ?? null} onBack={onBack}
       onPatch={(patch) => act(() => api.updateOrgProject(wsId, id, patch))}
       onPostUpdate={(u) => act(() => api.postProjectUpdate(wsId, id, u))}
       onAddMilestone={(m) => act(() => api.addProjectMilestone(wsId, id, m))}

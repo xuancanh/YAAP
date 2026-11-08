@@ -40,6 +40,7 @@ import { describeBlockedOn, parseBlockedOn } from './blocked-on';
 import { parseSteps } from './work-model';
 import { taskRef } from '../common/task-keys';
 import { PAGE_PROPS, clip, matches, pageOf } from '../common/data-page';
+import { claimTag } from './claims-model';
 
 const ORG = { type: 'string' } as const;
 
@@ -311,7 +312,10 @@ export class OrgDataTools implements ToolProviderHook {
     const depRows = await Promise.all(deps.slice(0, 8).map((id) => this.tasks.get(v.org.id, id).catch(() => null)));
     const limit = Math.min(50, Math.max(1, Number(input.limit) || 15));
     const transitions = (await this.tasks.transitions(v.org.id, t.id)).map((x) => ({ at: x.at, line: `${x.at.slice(0, 16).replace('T', ' ')} ${x.fromStatus ?? '∅'} → ${x.toStatus} by ${this.actorName(v, x.actor)}${x.reason ? ` — ${clip(x.reason, 120)}` : ''}` }));
-    const comments = (await this.tasks.messages(v.org.id, { taskId: t.id, limit: 50 })).map((m) => ({ at: m.createdAt, line: `${m.createdAt.slice(0, 16).replace('T', ' ')} ${m.fromAgentId ? this.nm(v, m.fromAgentId) : 'system'}: ${clip(m.text, 240)}` }));
+    const msgs = await this.tasks.messages(v.org.id, { taskId: t.id, limit: 50 });
+    // Evidence-gated claims (docs/evidence.md): an update nothing verified says so where it is read.
+    const flags = await this.tasks.evidence?.flags(v.org.id, 'task_comment', msgs.map((m) => m.id)).catch(() => null);
+    const comments = msgs.map((m) => ({ at: m.createdAt, line: `${m.createdAt.slice(0, 16).replace('T', ' ')} ${m.fromAgentId ? this.nm(v, m.fromAgentId) : 'system'}: ${clip(m.text, 240)}${flags?.has(m.id) ? ` ${claimTag(flags.get(m.id))}` : ''}` }));
     const timeline = [...transitions, ...comments].sort((a, b2) => a.at.localeCompare(b2.at)).slice(-limit);
     return [
       `${taskRef(t)} ${t.title} — ${t.status}${t.class ? `, class ${t.class}` : ''}${t.source ? `, source ${t.source}` : ''}`,

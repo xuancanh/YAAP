@@ -32,6 +32,7 @@ import { deriveWorkTunables } from './work-tunables';
 import { deriveMemoryTunables } from './memory-tunables';
 import { deriveProgramTunables } from './program-tunables';
 import { deriveQualityTunables } from './quality-tunables';
+import { deriveClaimTunables } from './claims-tunables';
 import { deriveProcessTunables } from './process-tunables';
 import { deriveServiceTunables } from './service-tunables';
 import { deriveDiscussionTunables } from '../groupchat/discussion-tunables';
@@ -165,6 +166,8 @@ export function deriveOperatingSystem(p: ProfileInput): OperatingSystemPlan {
   for (const t of deriveMemoryTunables(d)) set(t.key, t.value, t.why);
   // Quality control (docs/quality.md): evidence, verifier independence, the pass bar, spot checks, policy approval.
   for (const t of deriveQualityTunables(d)) set(t.key, t.value, t.why);
+  // Evidence-gated claims (docs/evidence.md): strictness per claim class, the evidence window, count tolerance, fabrication incidents.
+  for (const t of deriveClaimTunables(d)) set(t.key, t.value, t.why);
   // CEO alignment (docs/alignment.md): who aligns each class, the supervised floor, tolerances, cadences.
   for (const t of deriveAlignmentTunables(d)) set(t.key, t.value, t.why);
   // Processes (docs/processes.md): MUST enforcement, edit approval, revision threshold, SLAs, loops, reviews.

@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useApp } from '../store';
 import { api, type ChannelMessage, type MetricSource, type OrgCheckin, type OrgDetail, type OrgIntentNode, type ProgramOwner } from '../lib/api';
+import { ClaimBadge, useClaims } from './OrgClaimsView';
 import { checkInDue, confidenceGap, flattenIntent } from '../lib/org';
 import { fmtNum, HEALTH_LABEL, HEALTH_TONE, inDays, krHealth, nextCheckIn, objectiveHealth, objectivesOfTree, plural, shortDate, type Health } from '../lib/direction';
 import { I, P } from '../lib/icons';
@@ -214,6 +215,7 @@ function KrDetail({ k, org, sources, isCeo, act, refresh }: { k: OrgIntentNode }
   const load = useCallback(() => { void api.orgCheckIns(org.workspaceId, k.id).then(setHistory).catch(() => setHistory([])); }, [org.workspaceId, k.id]);
   useEffect(() => { load(); void api.goalMessages(org.workspaceId, k.id).then(setMsgs).catch(() => setMsgs([])); }, [load, org.workspaceId, k.id]);
   const gap = confidenceGap(k.measured, k.confidence);
+  const claims = useClaims(org.workspaceId, 'checkin', (history ?? []).map((c) => c.id));
   const projects = org.projects.filter((p) => p.goalId === k.id || (p.goalIds ?? '').includes(k.id));
   return (
     <div style={{ padding: '4px 16px 14px 36px', display: 'grid', gap: 12 }} data-testid="kr-detail">
@@ -237,6 +239,7 @@ function KrDetail({ k, org, sources, isCeo, act, refresh }: { k: OrgIntentNode }
               <li key={c.id} style={{ display: 'flex', gap: 10, fontSize: 12.5, alignItems: 'baseline', flexWrap: 'wrap' }}>
                 <span className="co-num co-faint" style={{ width: 64 }}>{shortDate(c.createdAt)}</span>
                 <span className="co-num" style={{ fontWeight: 600 }}>{fmtNum(c.currentValue)}{k.unitLabel ? ` ${k.unitLabel}` : ''}</span>
+                <ClaimBadge claim={claims.get(c.id)} />
                 <span className="co-dim">{c.confidence === null ? 'no confidence' : `${Math.round(c.confidence * 100)}% confident`}</span>
                 {c.note && <span style={{ flex: '1 1 200px' }}>{c.note}</span>}
               </li>

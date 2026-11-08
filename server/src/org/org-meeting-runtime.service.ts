@@ -78,7 +78,8 @@ import {
 } from './org-meetings.service';
 import { meetingTunable, operatingProfile } from './meeting-tunables';
 import { chiefTunable } from './chief-tunables';
-import { normalizeDue } from './org-tasks.service';
+import { OrgTasksService, normalizeDue } from './org-tasks.service';
+import { EVIDENCE_PROP } from './claims-model';
 import {
   agendaIsEmpty, agendaItems, agendaMarkdown, hasOpenThread, itemElapsedMinutes, openItemsText, parseRoom, tokensText,
   type ItemEnd, type MeetingRoom,
@@ -157,7 +158,7 @@ const MEETING_TOOLS: AiToolSpec[] = [
   { name: 'meeting_speak', description: 'Say something in the meeting thread (a few lines). Everyone in the channel reads it. One or two calls per turn at most; your final answer is posted too if you call nothing.', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
   { name: 'meeting_pass', description: 'Pass this turn: you have nothing to add. Nothing is posted (the room shows you passed); prefer this to saying "nothing to add". When everyone passes, the rounds end.', inputSchema: { type: 'object', properties: { reason: { type: 'string', description: 'Optional, a few words.' } } } },
   { name: 'meeting_propose_action', description: 'Propose an action item for the minutes. After the meeting it becomes a briefed task on the board for `owner` (assigned when the facilitator may assign them, else the backlog for the chief), with the due date when you give one.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, owner: { type: 'string', description: 'Member name.' }, done_when: { type: 'string', description: 'The acceptance rubric.' }, outcome: { type: 'string' }, due: { type: 'string', description: 'Optional deadline: yyyy-mm-dd or an ISO date-time.' } }, required: ['title', 'owner', 'done_when'] } },
-  { name: 'meeting_propose_decision', description: 'Propose a decision for the minutes: it is written to the decision log with its alternatives and rationale when the meeting closes (unless a person rejects it in the room).', inputSchema: { type: 'object', properties: { title: { type: 'string' }, decision: { type: 'string' }, alternatives: { type: 'string' }, rationale: { type: 'string' } }, required: ['title', 'decision'] } },
+  { name: 'meeting_propose_decision', description: 'Propose a decision for the minutes: it is written to the decision log with its alternatives and rationale when the meeting closes (unless a person rejects it in the room). A fact it rests on (a number, a result) cites evidence.', inputSchema: { type: 'object', properties: { title: { type: 'string' }, decision: { type: 'string' }, alternatives: { type: 'string' }, rationale: { type: 'string' }, evidence: EVIDENCE_PROP }, required: ['title', 'decision'] } },
   { name: 'meeting_raise_risk', description: 'Raise a risk for the minutes (audited).', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } },
   { name: 'meeting_ask_ceo', description: 'Ask the CEO a question only they can answer; they may answer in the room, else it goes into the minutes and the daily brief.', inputSchema: { type: 'object', properties: { question: { type: 'string' } }, required: ['question'] } },
 ];
@@ -243,6 +244,8 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
     @Optional() heartbeat?: HeartbeatService,
     /** Optional: the minutes document at the end of every meeting (docs/meetings.md). */
     @Optional() private readonly minutesDocs?: OrgMeetingMinutesService,
+    /** Optional: the evidence gate on proposed decisions (docs/evidence.md). */
+    @Optional() private readonly tasks?: OrgTasksService,
   ) {
     if (this.enabled()) this.turns.addToolProvider(this);
     heartbeat?.addReasonProvider({ name: 'meetings', reasons: (agentId, ctx) => this.heartbeatReasons(agentId, ctx.now) });
@@ -1236,11 +1239,14 @@ export class OrgMeetingRuntime implements ToolProviderHook, OnModuleInit, OnModu
         const title = str('title'); const decision = str('decision');
         if (!title || !decision) throw new Error('title and decision are required');
         if (ctx.minutes.decisions.length >= 20) throw new Error('the minutes already hold 20 decisions');
+        // Evidence-gated claims (docs/evidence.md): an external fact the decision rests on.
+        const claim = await this.tasks?.evidence?.check(ctx.orgId, { cls: 'decision', actor: `agent:${ctx.agentId}`, tool: 'meeting_propose_decision', text: [decision, str('rationale')].filter(Boolean).join('. '), evidence: input.evidence, context: { meetingId: ctx.meeting.id } }) ?? null;
         const d = { title: title.slice(0, 200), decision: decision.slice(0, 2_000), alternatives: str('alternatives').slice(0, 2_000), rationale: str('rationale').slice(0, 2_000), by: ctx.agentId };
         ctx.minutes.decisions.push(d);
-        (d as typeof d & { messageId?: string }).messageId = await post(`Decision proposed: ${title} — ${decision}${str('rationale') ? ` (${str('rationale')})` : ''}`);
+        await claim?.commit('minutes_decision', `${ctx.meeting.id}#${ctx.minutes.decisions.length - 1}`);
+        (d as typeof d & { messageId?: string }).messageId = await post(`Decision proposed: ${title} — ${decision}${str('rationale') ? ` (${str('rationale')})` : ''}${claim && !claim.counts ? ' [unverified]' : ''}`);
         await ctx.save();
-        return `Decision recorded for the minutes (${ctx.minutes.decisions.length} so far). It is logged when the meeting closes.`;
+        return `Decision recorded for the minutes (${ctx.minutes.decisions.length} so far). It is logged when the meeting closes.${claim ? ` ${claim.note}` : ''}`;
       }
       case 'meeting_raise_risk': {
         const text = str('text');

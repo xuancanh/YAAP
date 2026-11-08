@@ -28,6 +28,7 @@ import { BLOCKED_KINDS, blockerLine, describeBlockedOn, isBlockedKind, legacyBlo
 import type { MentionDelivery, TaskMentionHook } from './task-mentions.service';
 import { STEPS_CAP, TASK_SOURCES, deriveSource, isTaskSource, nextStepId, parseSteps, type TaskSource, type TaskStep } from './work-model';
 import { workTunable } from './work-tunables';
+import type { EvidenceGate } from './claims-model';
 
 export type OrgTask = typeof orgTasks.$inferSelect;
 export type OrgRun = typeof orgRuns.$inferSelect;
@@ -195,6 +196,7 @@ export class OrgTasksService {
 
   private acceptanceGate?: AcceptanceGate;
   private qualityGate?: QualityGate;
+  private evidenceGate?: EvidenceGate;
   private placer?: TaskPlacer;
   private claimGate?: ClaimGate;
   private managerResolver?: ManagerResolver;
@@ -306,6 +308,11 @@ export class OrgTasksService {
   setAcceptanceGate(gate: AcceptanceGate | undefined): void { this.acceptanceGate = gate; }
   /** OrgQualityService binds the quality gate (docs/quality.md). */
   setQualityGate(gate: QualityGate | undefined): void { this.qualityGate = gate; }
+  /** OrgClaimsService binds the evidence gate (docs/evidence.md): every
+   *  agent write into shared state that carries a claim passes it. */
+  setEvidenceGate(gate: EvidenceGate | undefined): void { this.evidenceGate = gate; }
+  /** The bound evidence gate, if any (the tool layers and readers call it). */
+  get evidence(): EvidenceGate | undefined { return this.evidenceGate; }
 
   /** The task's checks, parsed. */
   checksOf(t: Pick<OrgTask, 'checks'>): Check[] { return parseChecks(t.checks); }

@@ -58,6 +58,7 @@ import { OrgBootstrapService } from './org-bootstrap.service';
 import { KitsService } from '../foundry/kits.service';
 import { isValidCron } from './org-meetings.service';
 import { parseSteps, type TaskStep } from './work-model';
+import { claimTag } from './claims-model';
 import { taskRef } from '../common/task-keys';
 import { processTunable } from './process-tunables';
 import { PROCESS_TEMPLATES, templateById, templatesForRhythm } from './process-templates';
@@ -1287,9 +1288,12 @@ export class OrgProcessesService {
     const steps = await this.steps(orgId, run.id);
     const vars = parse<Record<string, string>>(run.vars, {});
     const inputs: Array<{ name: string; value: string; from: string }> = [];
-    for (const s of steps.filter((x) => x.current && x.status === 'done' && x.id !== step.id)) {
+    const done = steps.filter((x) => x.current && x.status === 'done' && x.id !== step.id);
+    // Evidence-gated claims (docs/evidence.md): an output nothing verified reaches later steps flagged.
+    const flags = await this.tasks.evidence?.flags(orgId, 'step_output', done.flatMap((s) => Object.keys(parse<Record<string, string>>(s.outputs, {})).map((k) => `${s.id}:${k}`))).catch(() => null);
+    for (const s of done) {
       const n = this.nodeOf(def, s);
-      for (const [k, v] of Object.entries(parse<Record<string, string>>(s.outputs, {}))) inputs.push({ name: k, value: v, from: n?.title ?? s.nodeId });
+      for (const [k, v] of Object.entries(parse<Record<string, string>>(s.outputs, {}))) inputs.push({ name: k, value: flags?.has(`${s.id}:${k}`) ? `${v} ${claimTag(flags.get(`${s.id}:${k}`))}` : v, from: n?.title ?? s.nodeId });
     }
     for (const [k, v] of Object.entries(vars)) if (!inputs.some((x) => x.name === k) && !def.nodes.some((n) => n.id.replace(/-/g, '_') === k)) inputs.push({ name: k, value: v, from: 'the run\'s start' });
     const waived = new Set(parse<Deviation[]>(step.deviations, []).filter((d) => d.status === 'approved').map((d) => d.item));

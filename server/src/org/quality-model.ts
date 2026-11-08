@@ -109,7 +109,8 @@ export function standardLoosens(before: { passScore: number; criteria: Criterion
 
 export interface EvidenceRef { kind: EvidenceKind; ref: string; hash?: string; raw: string }
 export interface CitedEvidence { criterion: string; refs: EvidenceRef[] }
-export interface VerifiedRef { raw: string; kind: string; ok: boolean; detail: string }
+/** `missing`: the referent does not exist at all (a fabrication signal, docs/evidence.md). */
+export interface VerifiedRef { raw: string; kind: string; ok: boolean; detail: string; missing?: boolean }
 
 /** One reference: `action:<id>`, `tool:<name or message id>`,
  *  `file:<path>[#sha256=<hex>]`, `url:<https://…>`, `check:<n>`,

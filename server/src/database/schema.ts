@@ -3160,3 +3160,39 @@ export const orgServiceRequests = pgTable('org_service_requests', {
   createdAt: text('createdAt').notNull(),
   updatedAt: text('updatedAt').notNull(),
 }, (t) => [uniqueIndex('idx_org_service_requests_key').on(t.orgId, t.key)]);
+/** An evidence-gated claim (docs/evidence.md): a statement an agent wrote
+ *  into shared state (a key-result value, a project or task update, a fact
+ *  in a decision, a step output, a lesson) with the evidence it cited, each
+ *  reference verified model-free, the counts cross-checked against the
+ *  record, and the verdict. `refType`/`refId` name the written record
+ *  (checkin, project_update, task_comment, decision, step_output,
+ *  minutes_lesson); readers look it up to flag what is unverified. */
+export const orgClaims = pgTable('org_claims', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  /** kr_checkin | project_update | task_update | decision | step_output | lesson. */
+  classKey: text('classKey').notNull(),
+  refType: text('refType').notNull(),
+  refId: text('refId').notNull(),
+  /** The author (an agent id). */
+  agentId: text('agentId').notNull(),
+  /** Where it was written: { taskId?, projectId?, goalId?, meetingId? } JSON. */
+  context: text('context').notNull().default('{}'),
+  statement: text('statement').notNull().default(''),
+  /** A claimed number (a key-result value), when the claim is one. */
+  value: real('value'),
+  /** verified | unverified | mismatch | fabricated. */
+  status: text('status').notNull().default('unverified'),
+  /** block | mark | log — the strictness it was written under. */
+  enforcement: text('enforcement').notNull().default('mark'),
+  /** JSON [{ raw, kind, ok, detail, missing? }]. */
+  refs: text('refs').notNull().default('[]'),
+  /** JSON [{ measure, n, phrase, measured, mismatch }]. */
+  counts: text('counts').notNull().default('[]'),
+  detail: text('detail').notNull().default(''),
+  /** Who verified it later (human:<id> | user | agent:<id>), and when. */
+  verifiedBy: text('verifiedBy').notNull().default(''),
+  verifiedAt: text('verifiedAt'),
+  createdAt: text('createdAt').notNull(),
+});

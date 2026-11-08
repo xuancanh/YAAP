@@ -15,6 +15,7 @@ import { openFileInPanel } from '../lib/file-links';
 import { ago, faint, input, linkBtn, useAgentNames, useUnits, Avatar } from './org-ui';
 import { useOrgRole } from './OrgSensingView';
 import { Card, Empty, Metric, PageHeader, Pill, SkeletonRows } from './CompanyKit';
+import { ClaimsPanel } from './OrgClaimsView';
 
 const errText = (e: unknown) => (e instanceof Error ? e.message.replace(/^\d{3} /, '').slice(0, 240) : 'failed');
 const row: React.CSSProperties = { display: 'flex', gap: 8, alignItems: 'baseline', padding: '6px 0', borderTop: '1px solid var(--border-soft)', fontSize: 12.5, minWidth: 0, flexWrap: 'wrap' };
@@ -82,6 +83,7 @@ export function QualityPane({ org }: { org: OrgDetail }) {
                 <PolicyRow key={p.id} p={p} violations={byPolicy.get(p.id) ?? []} names={names} decider={decider} onRetire={() => void act(() => api.reviseOrgPolicy(wsId, p.id, { action: 'retire' }), `Retired ${p.key}`)} openTask={(id) => app.openOrgTask(id)} />
               ))}
             </Card>
+            <ClaimsPanel org={org} />
             <Card id="quality-members" title="By member">
               {makersByYield(q).length === 0 && <Empty compact title="Nothing graded yet" />}
               {makersByYield(q).slice(0, 10).map((m) => (

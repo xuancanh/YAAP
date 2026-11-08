@@ -539,14 +539,25 @@ export class OrgQualityService implements OnModuleInit, OnModuleDestroy {
 
   /** Verify references model-free. `agentId` is whose work they must be (the maker; null = anyone in the workspace). */
   async verifyRefs(org: Organization, task: OrgTask, refs: EvidenceRef[], agentId: string | null): Promise<Map<string, VerifiedRef & { body?: string }>> {
+    return this.verifyEvidence(org, { since: task.createdAt, taskId: task.id }, refs, agentId);
+  }
+
+  /** The one evidence verifier (docs/quality.md §2, docs/evidence.md): a
+   *  review submission's references and a claim's (OrgClaimsService) are
+   *  checked by this code. `since` bounds tool calls, fetches and actions;
+   *  `taskId` resolves `check:` refs. `missing` marks a reference whose
+   *  referent does not exist at all (no such action, file, task, check, or
+   *  a tool the author never ran) — a fabrication signal, not merely an
+   *  unproven one. */
+  async verifyEvidence(org: Organization, scope: { since: string; taskId?: string | null }, refs: EvidenceRef[], agentId: string | null): Promise<Map<string, VerifiedRef & { body?: string }>> {
     const out = new Map<string, VerifiedRef & { body?: string }>();
-    const since = task.createdAt;
+    const since = scope.since;
     const agent = agentId ? (await this.db.select({ id: agentsTable.id, workspaceId: agentsTable.workspaceId, homeDir: agentsTable.homeDir }).from(agentsTable).where(eq(agentsTable.id, agentId))).at(0) : undefined;
     const sessionIds = agentId ? (await this.db.select({ id: chatSessions.id }).from(chatSessions).where(eq(chatSessions.agentId, agentId))).map((r) => r.id) : [];
     const mine = this.ledger.get(agentId ?? '') ?? [];
     for (const r of refs) {
       if (out.has(r.raw)) continue;
-      const set = (ok: boolean, detail: string, body?: string) => out.set(r.raw, { raw: r.raw, kind: r.kind, ok, detail, ...(body !== undefined ? { body } : {}) });
+      const set = (ok: boolean, detail: string, body?: string, missing?: boolean) => out.set(r.raw, { raw: r.raw, kind: r.kind, ok, detail, ...(body !== undefined ? { body } : {}), ...(missing ? { missing: true } : {}) });
       try {
         switch (r.kind) {
           case 'action': {
@@ -554,7 +565,7 @@ export class OrgQualityService implements OnModuleInit, OnModuleDestroy {
             if (q.length < 8) { set(false, 'an action id needs at least 8 characters'); break; }
             const rows = await this.db.select({ id: actionLog.id, tool: actionLog.tool, status: actionLog.status, agentId: actionLog.agentId }).from(actionLog).where(and(eq(actionLog.workspaceId, org.workspaceId), like(actionLog.id, `${q}%`))).limit(2);
             const a = rows[0];
-            if (!a) set(false, 'no such action in the action log');
+            if (!a) set(false, 'no such action in the action log', undefined, true);
             else if (agentId && a.agentId !== agentId) set(false, 'that action was not yours');
             else if (!['succeeded', 'staged', 'held'].includes(a.status)) set(false, `that action ${a.status}`);
             else set(true, `${a.tool} ${a.status}`);
@@ -566,7 +577,9 @@ export class OrgQualityService implements OnModuleInit, OnModuleDestroy {
             const name = r.ref.toLowerCase();
             const live = mine.some((c) => c.tool.toLowerCase() === name && c.at >= Date.parse(since));
             const stored = !live && sessionIds.length ? (await this.db.select({ id: chatMessages.id }).from(chatMessages).where(and(eq(chatMessages.role, 'tool'), eq(chatMessages.toolName, r.ref), inArray(chatMessages.sessionId, sessionIds), gte(chatMessages.createdAt, since))).limit(1)).length > 0 : false;
-            set(live || stored, live || stored ? `${r.ref} ran during this task` : `no ${r.ref} call of yours since the task was created`);
+            // Never run at all (not merely before the window) is a reference to nothing.
+            const ever = live || stored || !agentId || mine.some((c) => c.tool.toLowerCase() === name) || (sessionIds.length ? (await this.db.select({ id: chatMessages.id }).from(chatMessages).where(and(eq(chatMessages.role, 'tool'), eq(chatMessages.toolName, r.ref), inArray(chatMessages.sessionId, sessionIds))).limit(1)).length > 0 : false);
+            set(live || stored, live || stored ? `${r.ref} ran during this task` : ever ? `no ${r.ref} call of yours since the task was created` : `you never ran ${r.ref}`, undefined, !ever);
             break;
           }
           case 'file': {
@@ -574,7 +587,7 @@ export class OrgQualityService implements OnModuleInit, OnModuleDestroy {
             let path: string;
             try { path = resolvePath({ home: agent ? homeOfRow(agent).home || `agents/${agent.id}` : '' }, r.ref); } catch { set(false, 'not a workspace path'); break; }
             const file = await this.fs.read(org.workspaceId, path);
-            if (!file) { set(false, `no file /${path}`); break; }
+            if (!file) { set(false, `no file /${path}`, undefined, true); break; }
             if (r.hash) {
               const h = sha256(file.body.toString('utf8'));
               if (!h.startsWith(r.hash)) { set(false, `/${path} changed since (its sha256 is ${h.slice(0, 12)}…)`); break; }
@@ -593,15 +606,15 @@ export class OrgQualityService implements OnModuleInit, OnModuleDestroy {
           }
           case 'check': {
             const n = Number(r.ref);
-            const rows = await this.db.select().from(orgTaskChecks).where(and(eq(orgTaskChecks.orgId, org.id), eq(orgTaskChecks.taskId, task.id)));
+            const rows = scope.taskId ? await this.db.select().from(orgTaskChecks).where(and(eq(orgTaskChecks.orgId, org.id), eq(orgTaskChecks.taskId, scope.taskId))) : [];
             const c = Number.isFinite(n) ? rows.filter((x) => x.checkIndex === n - 1 || x.checkIndex === n).sort((a, b) => (a.ranAt < b.ranAt ? 1 : -1))[0] : rows.find((x) => x.id.startsWith(r.ref));
-            if (!c) set(false, 'no such check result on this task (org_run_checks first)');
+            if (!c) set(false, scope.taskId ? 'no such check result on this task (org_run_checks first)' : 'a check: ref needs the task it ran on', undefined, Boolean(scope.taskId));
             else set(c.status === 'pass', c.status === 'pass' ? `check ${c.checkIndex + 1} passed` : `check ${c.checkIndex + 1} is ${c.status}`);
             break;
           }
           case 'task': {
             const t = await this.tasks.byPrefix(org.id, r.ref).catch(() => null);
-            set(Boolean(t && t.status === 'done'), t ? (t.status === 'done' ? `${taskRef(t)} done` : `${taskRef(t)} is ${t.status}`) : 'no such task');
+            set(Boolean(t && t.status === 'done'), t ? (t.status === 'done' ? `${taskRef(t)} done` : `${taskRef(t)} is ${t.status}`) : 'no such task', undefined, !t);
             break;
           }
         }

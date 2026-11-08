@@ -212,7 +212,7 @@ export class OrgIntentService {
 
   /** The owner's check-in (docs/company-vision.md §2.3): a row, and the
    *  latest value / confidence on the goal. */
-  async checkIn(orgId: string, goalId: string, input: { currentValue?: number | null; confidence?: number | null; note?: string }, actor = 'user'): Promise<{ goal: OrgGoal; checkin: OrgCheckin }> {
+  async checkIn(orgId: string, goalId: string, input: { currentValue?: number | null; confidence?: number | null; note?: string }, actor = 'user', opts: { holdValue?: boolean } = {}): Promise<{ goal: OrgGoal; checkin: OrgCheckin }> {
     const g = await this.org.goal(orgId, goalId);
     if (g.kind !== 'key_result') throw new BadRequestException('check-ins are for key results');
     // Sensing (docs/sensing.md §2): a measured key result takes the owner's
@@ -232,7 +232,9 @@ export class OrgIntentService {
     };
     await this.db.insert(orgCheckins).values(checkin);
     await this.audit.append(orgId, { actor, action: 'goal_checkin', refType: 'goal', refId: g.id, payload: { currentValue: checkin.currentValue, confidence: checkin.confidence, note: checkin.note.slice(0, 200) } });
-    const goal = await this.org.updateGoal(orgId, g.id, { currentValue: checkin.currentValue, confidence: checkin.confidence, lastCheckInAt: now }, actor);
+    // An unverified claimed value (docs/evidence.md) is kept on the check-in
+    // row but does not move the key result until it is verified.
+    const goal = await this.org.updateGoal(orgId, g.id, { ...(opts.holdValue ? {} : { currentValue: checkin.currentValue }), confidence: checkin.confidence, lastCheckInAt: now }, actor);
     for (const fn of this.checkInListeners) await Promise.resolve(fn({ orgId, goal, checkin })).catch(() => undefined);
     return { goal, checkin };
   }
