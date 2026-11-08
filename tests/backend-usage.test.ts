@@ -23,7 +23,8 @@ test('priceFor: exact ids, date suffixes, longest prefix, family fallback, unkno
   assert.deepEqual(priceFor('gpt-4.1-mini-2025-04-14'), { input: 0.4, output: 1.6 }, 'longest prefix, not gpt-4.1');
   assert.deepEqual(priceFor('kimi-k2-0905-preview'), LIST_PRICES['kimi-k2']);
   assert.deepEqual(priceFor('models/gemini-2.5-flash'), { input: 0.3, output: 2.5 }, 'gateway prefixes are stripped');
-  assert.deepEqual(priceFor('claude-opus-5-5'), { input: 5, output: 25 }, 'unknown opus release prices as the family');
+  assert.deepEqual(priceFor('claude-opus-9-1'), { input: 5, output: 25 }, 'unknown opus release prices as the family');
+  assert.deepEqual(priceFor('claude-opus-5-5'), { input: 4, output: 20 }, 'a listed release has its own price');
   assert.deepEqual(priceFor('glm-4.7-flash'), { input: 0, output: 0 });
   assert.equal(priceFor('llama-3-70b'), null, 'unknown models are unpriced, never $0');
   assert.equal(priceFor(''), null);

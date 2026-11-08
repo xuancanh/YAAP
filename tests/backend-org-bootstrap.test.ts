@@ -135,7 +135,7 @@ test('full happy path: creates the chief with the profile in its charter, enable
   assert.ok((await s.audit.list(r.orgId, { action: 'profile_set' })).length === 1);
   // the two chosen tunables, plus what the operating system derived from the profile (the chosen keys win)
   assert.ok(!r.operatingSystem.tunables.some((t) => t.key === 'planning.objectivesPerVision' || t.key === 'intent.checkInCadenceDays'));
-  assert.equal((await s.audit.list(r.orgId, { action: 'tunable_set' })).length, 2 + r.operatingSystem.tunables.length);
+  assert.equal((await s.audit.list(r.orgId, { action: 'tunable_set', limit: 500 })).length, 2 + r.operatingSystem.tunables.length);
   assert.equal(payload.operatingSystem.stage, r.operatingSystem.stage);
   await new Promise((res) => setTimeout(res, 60));
 });
