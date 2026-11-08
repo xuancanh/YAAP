@@ -11,9 +11,11 @@
  *  undo steps) with a run laid over it, the runs as step timelines, the
  *  measures (Outcomes / Conformance) and the versions with their diffs and
  *  rollback. The CEO starts a run (a field per input the steps use), edits
- *  the definition beside a live preview, and retires it; every decision
- *  asks why inline. Lib: src/lib/processes.ts. */
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+ *  the definition in the visual editor in place of the graph
+ *  (ProcessEditor.tsx, loaded on demand), and retires it; every decision
+ *  asks why inline. A new process starts blank or from a library template
+ *  ("Customise before adding") in the same editor. Lib: src/lib/processes.ts. */
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useApp } from '../store';
 import { api, type OrgDetail, type OrgProcess, type OrgProcessDetail, type OrgProcessRunRow, type ProcessConformance, type ProcessDef, type ProcessRollout, type ProcessSuggestion, type ProcessTemplate } from '../lib/api';
 import {
@@ -26,12 +28,20 @@ import { ago, useAgentNames, useUnits } from './org-ui';
 import { useOrgRole } from './OrgSensingView';
 import { AttentionList, Avatar, Bar, Card, Empty, Menu, Metric, Owner, PageHeader, Pill, Segmented, SkeletonRows, type AttentionRow } from './CompanyKit';
 import { GraphLegend, ProcessGraph, type StepOverlay } from './ProcessGraph';
+import type { SaveOutcome } from './ProcessEditor';
 import '../styles/processes.css';
+
+/** The visual editor loads only when someone edits (its own chunk). */
+const ProcessEditor = lazy(() => import('./ProcessEditor'));
 
 const errText = (e: unknown) => (e instanceof Error ? e.message.replace(/^\d{3} /, '').slice(0, 600) : 'failed');
 const CATEGORY_WORD: Record<string, string> = { operating: 'Runs the company', delivery: 'Delivers work' };
 const plural = (n: number, w: string) => `${n} ${w}${n === 1 ? '' : 's'}`;
 const TONE_RANK: Record<string, number> = { bad: 0, warn: 1, info: 2, ok: 3, muted: 4 };
+/** A new process: one strict stage, started by hand (the editor's blank page). */
+const blankProcess = (): ProcessDef => ({ title: '', category: 'delivery', triggers: [{ kind: 'manual' }], stages: [{ id: 'main', title: 'Main', mode: 'strict' }], nodes: [], edges: [] });
+const OUTCOME_TONE: Record<SaveOutcome['kind'], 'ok' | 'warn' | 'info'> = { applied: 'ok', pending: 'warn', ramping: 'info' };
+const OUTCOME_WORD: Record<SaveOutcome['kind'], string> = { applied: 'Saved', pending: 'Waiting for approval', ramping: 'Ramping' };
 
 type RunDetail = OrgProcessDetail['runs'][number];
 
@@ -72,12 +82,24 @@ export function ProcessesPane({ org }: { org: OrgDetail }) {
   const [err, setErr] = useState<string | null>(null);
   const [library, setLibrary] = useState<false | { pick: string | null }>(false);
   const [showRetired, setShowRetired] = useState(false);
+  const [creating, setCreating] = useState<null | { def: ProcessDef; template?: { id: string; title: string } }>(null);
   const load = useCallback(async () => {
     try { setData(await api.orgProcesses(wsId)); setErr(null); } catch (e) { setErr(errText(e)); }
   }, [wsId]);
   useEffect(() => { void load(); const t = setInterval(() => { void load(); }, 30_000); return () => clearInterval(t); }, [load]);
 
   const open = app.routeProcess;
+  if (creating && !open) {
+    return (
+      <div className="co-page" data-testid="process-create">
+        <button className="co-link pr-back" onClick={() => setCreating(null)}><I d={P.chevL} size={12} />Processes</button>
+        <Suspense fallback={<SkeletonRows rows={6} label="Loading the editor" />}>
+          <ProcessEditor wsId={wsId} initial={creating.def} template={creating.template} onCancel={() => setCreating(null)}
+            onSaved={async (d, outcome) => { app.showToast(outcome.text); setCreating(null); await load(); app.setRouteProcess(d.process.id); }} />
+        </Suspense>
+      </div>
+    );
+  }
   if (open) return <ProcessPage wsId={wsId} processId={open} decider={decider} onBack={() => { app.setRouteProcess(null); void load(); }} />;
   const all = data?.processes ?? [];
   const live = all.filter((p) => p.status !== 'retired');
@@ -95,7 +117,10 @@ export function ProcessesPane({ org }: { org: OrgDetail }) {
     <div className="co-page" data-testid="processes-page">
       <PageHeader title="Processes"
         purpose={<>The company's standing procedures: how recurring, hand-off-heavy or risky work is done. Each run is pinned to a version, and each step an agent performs is an ordinary task with a step card. In a strict stage the engine follows the graph; in a dynamic stage the performer chooses. The chief of staff changes any process, and the heads their own, from what the runs show.</>}
-        actions={decider ? <button className="co-btn primary" onClick={() => openLibrary()}><I d={P.plus} size={13} />Add from library</button> : undefined} />
+        actions={decider ? <>
+          <button className="co-btn" onClick={() => setCreating({ def: blankProcess() })} data-testid="process-new"><I d={P.edit} size={12} />New process</button>
+          <button className="co-btn primary" onClick={() => openLibrary()}><I d={P.plus} size={13} />Add from library</button>
+        </> : undefined} />
       {err && <div className="co-alert" role="alert" style={{ marginBottom: 12 }}>{err}</div>}
       {!data && !err && <SkeletonRows rows={4} label="Loading processes" />}
       {data && live.length === 0 && (
@@ -154,7 +179,8 @@ export function ProcessesPane({ org }: { org: OrgDetail }) {
           {showRetired && <div className="co-card" style={{ marginTop: 8 }}><div className="co-rows pr-list">{retired.map((p) => <ProcessRow key={p.id} p={p} openRuns={0} owner={p.ownerAgentId ? names.get(p.ownerAgentId) : undefined} onOpen={() => app.setRouteProcess(p.id)} />)}</div></div>}
         </div>
       )}
-      {library && <LibraryDialog wsId={wsId} initial={library.pick} have={new Set(all.map((p) => p.templateId).filter(Boolean))} onClose={() => setLibrary(false)} onAdded={async (id) => { setLibrary(false); await load(); app.setRouteProcess(id); }} />}
+      {library && <LibraryDialog wsId={wsId} initial={library.pick} have={new Set(all.map((p) => p.templateId).filter(Boolean))} onClose={() => setLibrary(false)} onAdded={async (id) => { setLibrary(false); await load(); app.setRouteProcess(id); }}
+        onCustomise={(t) => { setLibrary(false); setCreating({ def: JSON.parse(JSON.stringify(t.def)) as ProcessDef, template: { id: t.id, title: t.title } }); }} />}
     </div>
   );
 }
@@ -285,7 +311,7 @@ function LibraryGrid({ wsId, have, onPick, limit }: { wsId: string; have: Set<st
   return <div className="pr-lib" data-testid="process-library">{list.slice(0, limit ?? list.length).map((t) => <TemplateCard key={t.id} t={t} added={have.has(t.id)} onClick={() => onPick(t)} />)}</div>;
 }
 
-function LibraryDialog({ wsId, initial, have, onClose, onAdded }: { wsId: string; initial: string | null; have: Set<string>; onClose: () => void; onAdded: (processId: string) => Promise<void> }) {
+function LibraryDialog({ wsId, initial, have, onClose, onAdded, onCustomise }: { wsId: string; initial: string | null; have: Set<string>; onClose: () => void; onAdded: (processId: string) => Promise<void>; onCustomise: (t: ProcessTemplate & { def: ProcessDef }) => void }) {
   const app = useApp();
   const { units } = useUnits();
   const { list, err } = useTemplates(wsId);
@@ -341,6 +367,7 @@ function LibraryDialog({ wsId, initial, have, onClose, onAdded }: { wsId: string
             </label>
             <span style={{ flex: 1 }} />
             <button className="co-btn ghost" onClick={() => setPick(null)}>Back</button>
+            {t.def && <button className="co-btn" onClick={() => onCustomise({ ...t, def: t.def! })} data-testid="process-customise"><I d={P.edit} size={12} />Customise before adding</button>}
             <button className="co-btn primary" onClick={() => void add()} disabled={busy}>{have.has(t.id) ? 'Add another copy' : 'Add this process'}</button>
           </div>
         )}
@@ -358,6 +385,7 @@ function ProcessPage({ wsId, processId, decider, onBack }: { wsId: string; proce
   const [err, setErr] = useState<string | null>(null);
   const [panel, setPanel] = useState<null | 'start' | 'edit' | 'retire'>(null);
   const [overlayRun, setOverlayRun] = useState<string | null | undefined>(undefined);
+  const [notice, setNotice] = useState<SaveOutcome | null>(null);
   const graphRef = useRef<HTMLDivElement>(null);
   const load = useCallback(async () => {
     try { setD(await api.orgProcess(wsId, processId)); setErr(null); } catch (e) { setErr(errText(e)); }
@@ -399,7 +427,7 @@ function ProcessPage({ wsId, processId, decider, onBack }: { wsId: string; proce
         purpose={<>{p.description || 'A standing procedure of the company.'} {MODE_HINT[p.mode] ?? ''}</>}
         actions={decider ? <>
           {p.status === 'active' && <button className="co-btn primary" onClick={() => setPanel(panel === 'start' ? null : 'start')} aria-expanded={panel === 'start'}><I d={P.play} size={12} />Start a run</button>}
-          {d.def && <button className="co-btn" onClick={() => setPanel(panel === 'edit' ? null : 'edit')} aria-expanded={panel === 'edit'}><I d={P.edit} size={12} />{panel === 'edit' ? 'Close editor' : 'Edit'}</button>}
+          {d.def && panel !== 'edit' && <button className="co-btn" onClick={() => { setPanel('edit'); setNotice(null); }} data-testid="process-edit"><I d={P.edit} size={12} />Edit</button>}
           <Menu label="More actions" trigger={<I d={P.dots} size={15} fill="currentColor" />} triggerClass="co-iconbtn" items={[{ id: 'retire', label: p.status === 'retired' ? 'Restore the process' : 'Retire the process', onSelect: () => setPanel('retire') }]} />
         </> : undefined} />
       <div className="pr-meta">
@@ -416,12 +444,25 @@ function ProcessPage({ wsId, processId, decider, onBack }: { wsId: string; proce
         </div>
       )}
       {panel === 'start' && <StartForm wsId={wsId} p={p} def={d.def} onCancel={() => setPanel(null)} onDone={async () => { setPanel(null); setOverlayRun(undefined); await load(); }} />}
-      {panel === 'edit' && d.def && <Editor wsId={wsId} p={p} def={d.def} onDone={async (next) => { setPanel(null); if (next) setD(next); else await load(); }} />}
       {attention.length > 0 && <div style={{ marginBottom: 14 }}><Card title="Needs attention" aside={`${attention.length}`} flush><AttentionList items={attention} limit={3} testid="process-attention" /></Card></div>}
       {d.rollout && d.rollout.verdict !== 'collecting' && <Rollout wsId={wsId} processId={p.id} r={d.rollout} decider={decider} onChanged={(x) => setD(x)} />}
       <div className="co-stack">
         <div ref={graphRef} style={{ scrollMarginTop: 12 }}>
-          {d.def
+          {notice && (
+            <div className="co-note" role="status" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginBottom: 10 }} data-testid="process-save-outcome">
+              <Pill tone={OUTCOME_TONE[notice.kind]}>{OUTCOME_WORD[notice.kind]}</Pill><span style={{ flex: 1 }}>{notice.text}</span>
+              {notice.kind === 'pending' && <button className="co-link" onClick={() => { app.go('inbox'); app.setInboxFilter('approvals'); }}>Open the Inbox</button>}
+              <button className="co-iconbtn" onClick={() => setNotice(null)} aria-label="Dismiss"><I d={P.x} size={12} /></button>
+            </div>
+          )}
+          {panel === 'edit' && d.def
+            ? (
+              <Suspense fallback={<div className="co-card" style={{ padding: 14 }}><SkeletonRows rows={6} label="Loading the editor" /></div>}>
+                <ProcessEditor wsId={wsId} initial={d.def} process={{ id: p.id, name: p.name, title: p.title, version: p.version }} ownerName={p.ownerAgentId ? names.get(p.ownerAgentId)?.name ?? p.ownerName : p.ownerName}
+                  onCancel={() => setPanel(null)} onSaved={(next, outcome) => { setPanel(null); setD(next); setNotice(outcome); app.showToast(outcome.text); }} />
+              </Suspense>
+            )
+            : d.def
             ? (
               <Card title={<span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>How it runs<GraphLegend /></span>}
                 action={d.runs.length > 0 ? (
@@ -586,64 +627,6 @@ function StartForm({ wsId, p, def, onCancel, onDone }: { wsId: string; p: OrgPro
         <div className="co-form-foot">
           <button type="button" className="co-btn ghost" onClick={onCancel}>Cancel</button>
           <button type="submit" className="co-btn primary" disabled={busy}>{busy ? 'Starting…' : 'Start the run'}</button>
-        </div>
-      </div>
-    </form>
-  );
-}
-
-/** The definition as JSON beside a live preview of the graph it makes. */
-function Editor({ wsId, p, def, onDone }: { wsId: string; p: OrgProcess; def: ProcessDef; onDone: (d: OrgProcessDetail | null) => Promise<void> }) {
-  const app = useApp();
-  const [text, setText] = useState(() => JSON.stringify(def, null, 2));
-  const [reason, setReason] = useState('');
-  const [ramp, setRamp] = useState('');
-  const [problem, setProblem] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const parsed = useMemo((): { def: ProcessDef | null; error: string | null } => {
-    try {
-      const x = JSON.parse(text) as ProcessDef;
-      if (!x || !Array.isArray(x.stages) || !Array.isArray(x.nodes) || !Array.isArray(x.edges)) return { def: null, error: 'A definition needs stages, nodes and edges (lists).' };
-      return { def: x, error: null };
-    } catch (e) { return { def: null, error: `Not valid JSON: ${errText(e)}` }; }
-  }, [text]);
-  const changed = text !== JSON.stringify(def, null, 2);
-  const save = async () => {
-    if (!parsed.def) { setProblem(parsed.error); return; }
-    const pctRamp = ramp.trim() === '' ? undefined : Math.max(0, Math.min(90, Math.round(Number(ramp))));
-    setBusy(true); setProblem(null);
-    try {
-      const d = await api.editOrgProcess(wsId, p.id, { def: parsed.def, reason: reason.trim(), ...(pctRamp !== undefined && Number.isFinite(pctRamp) ? { ramp: pctRamp } : {}) });
-      app.showToast(d.rollout ? `v${d.rollout.candidateVersion} ramps on ${d.rollout.percent}% of new runs` : d.process.pendingVersion ? `v${d.process.pendingVersion} waits for approval` : `${p.title} v${d.process.version} is active`);
-      await onDone(d);
-    } catch (e) { setProblem(errText(e)); setBusy(false); }
-  };
-  return (
-    <form className="co-card" style={{ padding: 14, marginBottom: 14 }} aria-label={`Edit ${p.title}`} data-testid="process-editor" onSubmit={(e) => { e.preventDefault(); void save(); }}>
-      <div className="co-form">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-          <span className="co-card-title">Edit {p.title}</span>
-          <span className="co-faint">— saving makes v{p.version + 1}; v{p.version} stays and can be rolled back to</span>
-        </div>
-        <div className="pr-editor">
-          <label className="co-field"><span>Definition</span>
-            <textarea className="co-input pr-code" rows={22} value={text} onChange={(e) => setText(e.target.value)} spellCheck={false} />
-            <small>Stages (strict or dynamic); steps (task, approval, wait, subprocess, meeting) with at most nine MUST / SHOULD / MAY items; edges in strict stages, and a loop needs loopMax; a step with outside effects may name the step that undoes it (compensate).</small>
-          </label>
-          <div className="co-field"><span>Preview</span>
-            <div className="pr-preview" aria-live="polite">
-              {parsed.def ? <ProcessGraph def={parsed.def} compact testid="process-editor-preview" /> : <div className="co-alert" role="status">{parsed.error}</div>}
-            </div>
-          </div>
-        </div>
-        <div className="co-form-row">
-          <label className="co-field"><span>Why (what the runs showed)</span><input className="co-input" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="e.g. the security scan was skipped in two runs" /></label>
-          <label className="co-field" style={{ maxWidth: 240 }}><span>Try it on (% of new runs)</span><input className="co-input" inputMode="numeric" value={ramp} onChange={(e) => setRamp(e.target.value.replace(/[^\d]/g, ''))} placeholder="company default" aria-label="Ramp percent" /><small>0 = every new run at once. Used when the process has a track record.</small></label>
-        </div>
-        {problem && <div className="co-alert" role="alert" style={{ whiteSpace: 'pre-wrap' }}>{problem}</div>}
-        <div className="co-form-foot">
-          <button type="button" className="co-btn ghost" onClick={() => void onDone(null)}>Cancel</button>
-          <button type="submit" className="co-btn primary" disabled={!reason.trim() || !changed || !parsed.def || busy} title={!changed ? 'Nothing changed yet' : !reason.trim() ? 'Say why first' : undefined}>{busy ? 'Saving…' : 'Save as a new version'}</button>
         </div>
       </div>
     </form>

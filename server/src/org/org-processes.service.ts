@@ -78,9 +78,10 @@ import { processTunable } from './process-tunables';
 import { PROCESS_TEMPLATES, templateById, templatesForRhythm } from './process-templates';
 import {
   SLUG_RE, backEdges, canAdopt, compareCohorts, compensationPlan, computeConformance, computeMetrics, describeProblems, diffProcess, downstream, dynamicAvailable, fill, holds,
-  missingCheckpoints, modeOf, nodesOf, normalizeProcess, processHash, rampBucket, stepCard, strictStageDone, strictWalk, touchesControls, validateProcess,
-  type CardItem, type CohortComparison, type ConformanceFacts, type ProcessConformance, type ProcessDef, type ProcessMetrics, type ProcessNode, type ProcessStage, type StepState,
+  missingCheckpoints, modeOf, nodesOf, normalizeProcess, stepCard, strictStageDone, strictWalk, touchesControls, validateProcess,
+  type CardItem, type CohortComparison, type ConformanceFacts, type ProcessConformance, type ProcessDef, type ProcessMetrics, type ProcessNode, type ProcessProblem, type ProcessStage, type StepState,
 } from './process-model';
+import { processHash, rampBucket } from './process-hash';
 import { draftProcess, minePatterns, titleWords, type AdHocFact, type DiscoveredPattern, type TaskFact } from './process-discovery';
 
 export type OrgProcess = typeof orgProcesses.$inferSelect;
@@ -251,10 +252,30 @@ export class OrgProcessesService {
   }
 
   private async validate(orgId: string, def: ProcessDef, name: string): Promise<void> {
-    const org = await this.org.get(orgId);
-    const names = new Set((await this.list(orgId, { includeRetired: true })).map((p) => p.name));
-    const problems = validateProcess(def, { loopMaxCeiling: processTunable(org, 'process.loopMaxCeiling'), processNames: names, selfName: name, isValidCron });
+    const problems = (await this.check(orgId, def, { name, nameChecked: true })).problems;
     if (problems.length) throw new BadRequestException(`refused: the process definition has ${problems.length} problem(s):\n${describeProblems(problems)}`);
+  }
+
+  /**
+   * The problems `author` would refuse a definition for, without writing
+   * anything (the page's editor checks as the CEO types): the same
+   * normalisation and validation with the company's loop ceiling, the known
+   * process names and the cron reader. For a new process (no `process`)
+   * the name it would get is checked for a clash too.
+   */
+  async check(orgId: string, raw: unknown, opts: { process?: string; name?: string; template?: string; /** The caller checks the name itself (author). */ nameChecked?: boolean } = {}): Promise<{ problems: ProcessProblem[]; def: ProcessDef; name: string; loopMaxCeiling: number; processNames: string[] }> {
+    const org = await this.org.get(orgId);
+    const list = await this.list(orgId, { includeRetired: true });
+    const existing = opts.process ? await this.get(orgId, opts.process) : null;
+    const def = normalizeProcess(raw);
+    const name = existing?.name ?? (opts.name ?? opts.template ?? def.title).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
+    const loopMaxCeiling = processTunable(org, 'process.loopMaxCeiling');
+    const problems = validateProcess(def, { loopMaxCeiling, processNames: new Set(list.map((p) => p.name)), selfName: name, isValidCron });
+    if (!existing && !opts.nameChecked && def.title) {
+      if (!SLUG_RE.test(name)) problems.push({ where: 'title', problem: 'the title makes no usable name', fix: 'start the title with a letter, e.g. "Release checklist"' });
+      else if (list.some((p) => p.name === name)) problems.push({ where: 'title', problem: `a process "${name}" exists`, fix: 'give this one another title, or edit the existing process' });
+    }
+    return { problems, def, name, loopMaxCeiling, processNames: list.filter((p) => p.name !== name).map((p) => p.name) };
   }
 
   // ---- definitions: writes ----

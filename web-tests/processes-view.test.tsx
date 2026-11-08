@@ -64,6 +64,7 @@ const apiMock = {
   rollbackOrgProcess: vi.fn(async () => detail),
   rolloutOrgProcess: vi.fn(async () => detail),
   decideProcessSuggestion: vi.fn(async () => ({ ...suggestion, status: 'accepted' })),
+  validateOrgProcess: vi.fn(async () => ({ problems: [], name: 'x', loopMaxCeiling: 3, processNames: [] })),
 };
 vi.mock('../src/lib/api', async (orig) => ({ ...(await orig<typeof import('../src/lib/api')>()), api: apiMock }));
 
@@ -202,5 +203,33 @@ describe('the Processes pane', () => {
     fireEvent.click(within(ramp).getByText('Roll back'));
     answer('deviations doubled', 'Roll back');
     await waitFor(() => expect(apiMock.rolloutOrgProcess).toHaveBeenCalledWith('ws1', 'p1', { action: 'rollback', reason: 'deviations doubled' }));
+  });
+  it('Edit swaps the graph for the visual editor in place; Cancel brings the graph back', async () => {
+    fake.routeProcess = 'p1';
+    render(<ProcessesPane org={org} />);
+    await waitFor(() => expect(screen.getByTestId('process-graph')).toBeInTheDocument());
+    fireEvent.click(screen.getByTestId('process-edit'));
+    const editor = await screen.findByTestId('process-editor', {}, { timeout: 3_000 });
+    expect(editor).toHaveTextContent('Edit Release checklist');
+    expect(screen.queryByTestId('process-graph')).not.toBeInTheDocument();
+    expect(within(editor).getAllByTestId('editor-node')).toHaveLength(3);
+    fireEvent.click(within(editor).getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByTestId('process-graph')).toBeInTheDocument();
+  });
+
+  it('a template can be customised before adding; a new process starts blank in the same editor', async () => {
+    render(<ProcessesPane org={org} />);
+    await waitFor(() => expect(screen.getByTestId('process-list')).toBeInTheDocument());
+    fireEvent.click(screen.getByRole('button', { name: /Add from library/ }));
+    const dialog = await screen.findByTestId('process-library-dialog');
+    await waitFor(() => expect(within(dialog).getByTestId('process-template')).toBeInTheDocument());
+    fireEvent.click(within(dialog).getByTestId('process-template'));
+    fireEvent.click(within(dialog).getByTestId('process-customise'));
+    const editor = await screen.findByTestId('process-editor', {}, { timeout: 3_000 });
+    expect(editor).toHaveTextContent('Customise Release checklist');
+    expect(within(editor).getAllByTestId('editor-node')).toHaveLength(3);
+    fireEvent.click(within(editor).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(await screen.findByTestId('process-new'));
+    expect(await screen.findByTestId('process-editor')).toHaveTextContent('New process');
   });
 });

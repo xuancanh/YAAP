@@ -818,3 +818,36 @@ test('the library route sends each template with its definition, for the page\'s
   assert.equal(rel.steps, rel.def.nodes.length);
   assert.deepEqual(rel.def.stages.map((x) => x.id), ['check', 'ship']);
 });
+
+test('validate (the editor\'s live check) reports what a save would be refused for, with the company\'s loop ceiling and process names, and writes nothing', async () => {
+  const s = await setup();
+  const orgId = await company(s);
+  const { processes } = wire(s);
+  const rel = await processes.instantiate(orgId, 'release-checklist');
+  const def = (await processes.activeDef(orgId, rel))!;
+  const before = (await processes.versions(orgId, rel.id)).length;
+  assert.deepEqual((await processes.check(orgId, def, { process: rel.id })).problems, [], 'the active definition is valid');
+  const ceiling = (await processes.check(orgId, def, { process: rel.id })).loopMaxCeiling;
+  const broken = {
+    ...def,
+    nodes: [...def.nodes, { id: 'sub', title: 'Hand off', kind: 'subprocess', stage: def.stages[0].id, process: 'no-such-process' }, { id: 'loop', title: 'Loop', kind: 'task', stage: def.stages[0].id }],
+    edges: [...def.edges, { from: def.nodes[0].id, to: 'loop' }, { from: 'loop', to: def.nodes[0].id, loopMax: ceiling + 1 }],
+    triggers: [{ kind: 'cadence', cron: 'every day' }],
+  };
+  const r = await processes.check(orgId, broken, { process: rel.id });
+  assert.ok(r.problems.some((p) => p.where === 'step sub' && /no process "no-such-process"/.test(p.problem)), JSON.stringify(r.problems));
+  assert.ok(r.problems.some((p) => /loopMax must be 1–/.test(p.problem)), 'the company\'s loop ceiling applies');
+  assert.ok(r.problems.some((p) => p.where === 'triggers'), 'the cron reader applies');
+  assert.ok(r.problems.every((p) => p.fix), 'every problem says what to do');
+  // a new process whose title clashes with an existing name
+  const clash = await processes.check(orgId, { ...def, title: 'Release checklist' }, {});
+  assert.ok(clash.problems.some((p) => p.where === 'title' && /exists/.test(p.problem)), JSON.stringify(clash.problems));
+  assert.deepEqual((await processes.check(orgId, { ...def, title: 'Hotfix checklist' }, {})).problems, []);
+  assert.equal((await processes.versions(orgId, rel.id)).length, before, 'nothing written');
+  // the route: read-only, delegates to check
+  const { ProcessesController } = await import('../server/src/org/processes.controller');
+  const ctl = new ProcessesController({ orgIdOf: async () => orgId } as never, {} as never, {} as never, processes, { get: () => true } as never);
+  const out = await ctl.validate('ws1', { def: broken as never, process: rel.id });
+  assert.equal(out.problems.length, r.problems.length);
+  assert.equal(out.loopMaxCeiling, ceiling);
+});

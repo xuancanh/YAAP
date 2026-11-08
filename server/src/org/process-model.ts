@@ -30,8 +30,11 @@
  * (with dead-path elimination, so a branch not taken never leaves a join
  * waiting), dynamic availability, the step card text and the metrics. The
  * service (org-processes.service.ts) persists and acts on the results.
+ *
+ * No Node imports: the SPA's process editor (src/lib/process-editor.ts)
+ * validates with this same code as the author types. The hashes (crypto)
+ * live in process-hash.ts.
  */
-import { createHash } from 'node:crypto';
 
 export type ProcessMode = 'strict' | 'dynamic';
 export const PROCESS_MODES: readonly ProcessMode[] = ['strict', 'dynamic'];
@@ -296,10 +299,6 @@ export function validateProcess(def: ProcessDef, opts: ValidateOpts = {}): Proce
 /** The problems as one refusal with remediation (never a bare "no"). */
 export function describeProblems(problems: ProcessProblem[]): string {
   return problems.slice(0, 12).map((p, i) => `${i + 1}. ${p.where}: ${p.problem} — ${p.fix}`).join('\n');
-}
-
-export function processHash(def: ProcessDef): string {
-  return createHash('sha256').update(JSON.stringify(def)).digest('hex').slice(0, 16);
 }
 
 // ---- graph helpers ----
@@ -636,11 +635,6 @@ export function computeMetrics(runs: RunFacts[], steps: StepFacts[], opts: { rev
 }
 
 // ---- ramped rollout: two cohorts compared ----
-
-/** A run's bucket 0–99 for a ramp (deterministic per key). Pure. */
-export function rampBucket(key: string): number {
-  return parseInt(createHash('sha256').update(key).digest('hex').slice(0, 8), 16) % 100;
-}
 
 export type RampVerdict = 'collecting' | 'promote' | 'rollback';
 export interface CohortRow { metric: 'completion' | 'cycle' | 'deviation' | 'rework'; stable: number | null; candidate: number | null; worse: boolean }

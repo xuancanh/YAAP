@@ -5,6 +5,7 @@
  *  GET    /api/workspaces/:id/org/processes/templates             the built-in library
  *  GET    /api/workspaces/:id/org/processes/:pid                  one process: definition, versions with diffs, runs with steps, events
  *  POST   /api/workspaces/:id/org/processes                       { template? | def?, name?, unitId?, reason } — a new process
+ *  POST   /api/workspaces/:id/org/processes/validate              { def, process?, name?, template? } — the problems a save would be refused for; writes nothing
  *  PUT    /api/workspaces/:id/org/processes/:pid                  { def, reason } — a new version
  *  POST   /api/workspaces/:id/org/processes/:pid/rollback         { version, reason }
  *  POST   /api/workspaces/:id/org/processes/:pid/retire           { reason, restore? }
@@ -34,6 +35,13 @@ export class ProcessCreateDto {
   @IsOptional() @IsString() name?: string;
   @IsOptional() @IsString() unitId?: string | null;
   @IsString() reason!: string;
+}
+export class ProcessValidateDto {
+  @IsObject() def!: Record<string, unknown>;
+  /** The process being edited (absent: a new one, whose name is checked too). */
+  @IsOptional() @IsString() process?: string;
+  @IsOptional() @IsString() name?: string;
+  @IsOptional() @IsString() template?: string;
 }
 export class ProcessEditDto {
   @IsObject() def!: Record<string, unknown>;
@@ -109,6 +117,12 @@ export class ProcessesController {
     const orgId = await this.oid(id);
     const r = await this.processes.author(orgId, { template: dto.template, def: dto.def, name: dto.name, unitId: dto.unitId ?? null, reason: dto.reason }, await this.writer(orgId));
     return this.processes.detail(orgId, r.process.id);
+  }
+
+  /** Read-only: what `author` would refuse this definition for (the editor's live check). Anyone who reads the company may ask. */
+  @Post('validate') async validate(@Param('id') id: string, @Body() dto: ProcessValidateDto) {
+    const r = await this.processes.check(await this.oid(id), dto.def, { process: dto.process, name: dto.name, template: dto.template });
+    return { problems: r.problems, name: r.name, loopMaxCeiling: r.loopMaxCeiling, processNames: r.processNames };
   }
 
   @Put(':pid') async edit(@Param('id') id: string, @Param('pid') pid: string, @Body() dto: ProcessEditDto) {

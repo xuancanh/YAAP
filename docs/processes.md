@@ -327,6 +327,7 @@ GET    /api/workspaces/:id/org/processes                      list + open runs
 GET    /api/workspaces/:id/org/processes/templates            the library (each with its definition, for the preview)
 GET    /api/workspaces/:id/org/processes/:pid                 definition, versions (diffs), runs (steps), events
 POST   /api/workspaces/:id/org/processes                      { template? | def?, name?, unitId?, reason }
+POST   /api/workspaces/:id/org/processes/validate             { def, process?, name?, template? } — read-only: the problems a save would be refused for
 PUT    /api/workspaces/:id/org/processes/:pid                 { def, reason } — a new version
 POST   /api/workspaces/:id/org/processes/:pid/rollback        { version, reason }
 POST   /api/workspaces/:id/org/processes/:pid/retire          { reason, restore? }
@@ -336,7 +337,8 @@ POST   /api/workspaces/:id/org/processes/:pid/rollout         { action: promote 
 POST   /api/workspaces/:id/org/processes/suggestions/:sid     { action: accept | dismiss, reason? }
 ```
 
-Writes are the CEO's or a board member's. On screen: **Operations ›
+Writes are the CEO's or a board member's (`validate` writes nothing and
+is open to every reader). On screen: **Operations ›
 Processes** (`/<company>/operations/processes`) lists every process with its
 mode, owner, version, triggers, runs and health, the open runs, and the
 library; a process's page (`/<company>/processes/<id>`) shows its stages as
@@ -344,7 +346,8 @@ a graph (strict: columns in the order the engine walks them, loops as
 "back to"; dynamic: each step with when it is available and its
 checkpoints), the metrics, the runs with each step's state and task, and
 the versions with their diffs and "Roll back"; the CEO edits the
-definition (with a ramp share), starts a run and retires it there. Meeting
+definition in the visual editor (below; with a ramp share), starts a run and
+retires it there. Meeting
 steps say what they hold and who comes; the compensations are listed as
 "If a run fails or is cancelled"; a run being undone says so. Outcomes and
 Conformance are two tabs; a ramp shows both cohorts side by side with the
@@ -366,8 +369,80 @@ timeline of its steps, with the deviations in full and the steps not
 reached yet. Too narrow for the lanes, the graph becomes a vertical list.
 Every decision on the page (dismiss, retire, cancel, promote, roll back)
 asks why inline. The library is a dialog whose templates preview their
-graph; the editor previews the definition as it is typed; starting a run
-asks for each `${input}` the steps use.
+graph ("Customise before adding" opens the template in the editor);
+starting a run asks for each `${input}` the steps use.
+
+### The editor
+
+`src/components/ProcessEditor.tsx` (with `ProcessInspector.tsx`; the pure
+half is `src/lib/process-editor.ts`) is loaded only when someone edits, in
+its own chunk. "Edit" on a process's page swaps the graph for the editor in
+place; "New process" on the list opens it blank; "Customise before adding"
+opens a library template (saved as a new process named by its title, the
+template still recorded). The definition model is unchanged: the editor
+only produces a `def`.
+
+- **Canvas.** The stages stacked, a row per role (lanes are roles: the
+  rows in use, the owner's row always, plus any added with "+ Role";
+  approvals sit in the approver's row, timers and sub-processes in
+  "Automatic"), the engine's columns, undo steps in "If a run fails or is
+  cancelled". Drag the background to pan; Ctrl/⌘ + wheel or the buttons to
+  zoom; "Fit" fits the width (the canvas fits itself as the process grows
+  until the author pans or zooms).
+- **Drag and drop** (pointer events; each has a keyboard alternative in the
+  inspector). A step onto a row moves it to that role and stage — links
+  that would cross stages are removed with a note; a row that cannot hold
+  it (a task in the approvers' row) is refused with why. A step onto
+  another step goes just before it. From a step's dot onto another step: a
+  link — one that closes a cycle is the loop (the steps are re-ordered so
+  the engine's declaration-order DFS counts the new link, not an older one,
+  as the back edge) with a round limit of 2 within `process.loopMaxCeiling`;
+  in a "performer chooses" stage the target becomes *available after* the
+  source (a cycle is refused); onto an undo step, that step undoes the
+  source. A palette kind (Task, Approval, Wait, Meeting, Sub-process, Undo
+  step) onto a row adds it there; onto a step adds it right after (a lone
+  unconditional onward link is taken over: A→new→B); clicking it adds after
+  the selected step. "+ Follows the graph" / "+ Performer chooses" add a
+  stage.
+- **Inspector.** Nothing selected: the title, what it is for, the kind of
+  work, who owns the runs and how it starts (by hand, a schedule, an event,
+  a service request). A step: title, kind, why, who does it (a role menu or
+  "Another role…"), the approver and question, the hours to wait, the
+  process a sub-process runs, a meeting's kind, attendees and agenda, the
+  MUST/SHOULD/MAY checklist (add, re-level, reorder, remove; n / 9), the
+  records it leaves, checkpoint and "available after" (dynamic) or "comes
+  after / leads to / then goes to…" (strict), its undo step (or "+ A new
+  undo step"), deadline, model tier, tools not allowed, more details
+  (outcome, done when, context, playbook, attempts) and its place (stage,
+  earlier / later, delete). A link: always or "only if" — what it depends
+  on (a step's record, an approval's answer, a meeting's minutes, or a
+  typed name), is / is not / is known / is not known, the value — and, for
+  a loop, how many rounds. A stage: its name, how it runs (switching turns
+  links into "available after" and back), its order, delete.
+- **Keyboard.** Every step is focusable (Enter selects); Delete/Backspace
+  removes the selected step or link; Ctrl/⌘+Z undoes, Shift+Ctrl/⌘+Z or
+  Ctrl+Y redoes (typing in one field within a second is one step); Alt+↑/↓
+  moves the step among its row's steps; Escape clears the selection.
+  "Tidy" re-orders the steps by the engine's columns (never changing which
+  link is the loop).
+- **Live check.** Every edit is checked with the server's own
+  `normalizeProcess` + `validateProcess` (imported from the pure
+  `server/src/org/process-model.ts`, which therefore has no Node imports —
+  the hashes live in `process-hash.ts`), and, after a pause, by `POST
+  …/processes/validate` (the company's loop ceiling, the known process
+  names, the cron reader, and a name clash for a new process). Each problem
+  is pinned to its step (a red card with a count), link (a red line) or
+  stage, in plain words, with a summary in the bar that selects the
+  culprit. Save stays off until both pass and something changed; it asks
+  why (and the ramp share, or the owning department for a new process),
+  then goes through the ordinary author path (`PUT` / `POST`), and the page
+  says the outcome: active, ramping on n% of new runs, or waiting for
+  approval in the Inbox.
+- **View JSON** shows the definition as text for an expert; valid edits
+  there apply (and undo) like any other.
+- **Narrow screens** (under 720px wide): the stages as lists with up/down
+  buttons and an add bar, the same inspector opening under the selected
+  step.
 
 ## 10. Not built yet
 

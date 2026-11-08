@@ -1927,6 +1927,8 @@ export type ProcessStepKind = 'task' | 'approval' | 'wait' | 'subprocess' | 'mee
 export interface ProcessNodeDef {
   id: string; title: string; kind: ProcessStepKind; stage?: string; why?: string; lane?: string;
   outcome?: string; context?: string; doneWhen?: string; class?: string;
+  /** A model tier the step declares for automatic selection. */
+  tier?: 'cheap' | 'standard' | 'strong';
   must?: string[]; should?: string[]; may?: string[]; deny?: string[];
   outputs?: Array<{ name: string; required?: boolean; description?: string }>;
   checks?: unknown[]; playbook?: string; required?: boolean;
@@ -2000,6 +2002,8 @@ export interface OrgProcessDetail {
   events: Array<{ id: string; runId: string; nodeId: string; activity: string; actor: string; detail: Record<string, unknown>; at: string }>;
   rollout?: ProcessRollout | null; suggestions?: ProcessSuggestion[];
 }
+/** The editor's live check (POST …/processes/validate): what a save would be refused for. */
+export interface ProcessValidation { problems: Array<{ where: string; problem: string; fix: string }>; name: string; loopMaxCeiling: number; processNames: string[] }
 export interface ProcessTemplate { id: string; title: string; summary: string; category: string; mode: string; triggers: string; steps: number; /** The definition, for a preview (absent from older servers). */ def?: ProcessDef }
 
 export interface OrgIncident {
@@ -2892,6 +2896,8 @@ export const api = {
   orgProcess: (wsId: string, processId: string) => get<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}`),
   createOrgProcess: (wsId: string, body: { template?: string; def?: ProcessDef; name?: string; unitId?: string | null; reason: string }) => send<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes`, 'POST', body),
   editOrgProcess: (wsId: string, processId: string, body: { def: ProcessDef; reason: string; ramp?: number }) => send<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}`, 'PUT', body),
+  /** Read-only: the problems a save would be refused for (the editor's live check). */
+  validateOrgProcess: (wsId: string, body: { def: ProcessDef; process?: string; name?: string; template?: string }) => send<ProcessValidation>(`/api/workspaces/${wsId}/org/processes/validate`, 'POST', body),
   rolloutOrgProcess: (wsId: string, processId: string, body: { action: 'promote' | 'rollback' | 'percent'; percent?: number; reason?: string }) => send<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}/rollout`, 'POST', body),
   decideProcessSuggestion: (wsId: string, suggestionId: string, body: { action: 'accept' | 'dismiss'; reason?: string }) => send<ProcessSuggestion>(`/api/workspaces/${wsId}/org/processes/suggestions/${enc(suggestionId)}`, 'POST', body),
   rollbackOrgProcess: (wsId: string, processId: string, body: { version: number; reason: string }) => send<OrgProcessDetail>(`/api/workspaces/${wsId}/org/processes/${enc(processId)}/rollback`, 'POST', body),
