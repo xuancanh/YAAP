@@ -282,7 +282,14 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2,
     "memory.guidanceRepeats": 2,
-    "memory.lessonStaleDays": 21
+    "memory.lessonStaleDays": 21,
+    "quality.defaultPassScore": 3,
+    "quality.spotCheckPct": 5,
+    "quality.spotCheckReviewedPct": 1,
+    "quality.spotChecksPerDay": 2,
+    "quality.escapeIncident": 3,
+    "policy.authoringApproval": 0,
+    "policy.repeatForIncident": 5
    },
    "playbooks": [],
    "budget": {
@@ -554,7 +561,17 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "discussion.autoCloseHours": 72,
     "discussion.agentDailyCap": 2,
     "memory.guidanceRepeats": 4,
-    "memory.lessonStaleDays": 90
+    "memory.lessonStaleDays": 90,
+    "quality.evidenceRequired": 2,
+    "quality.verifierIndependence": 2,
+    "quality.defaultPassScore": 4,
+    "quality.spotCheckPct": 25,
+    "quality.spotCheckReviewedPct": 8,
+    "quality.spotChecksPerDay": 6,
+    "quality.escapeIncident": 1,
+    "policy.repeatForIncident": 2,
+    "policy.repeatWindowHours": 336,
+    "policy.signalSeverity": 2
    },
    "playbooks": [],
    "budget": {
@@ -865,7 +882,14 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2,
     "memory.guidanceRepeats": 2,
-    "memory.lessonStaleDays": 21
+    "memory.lessonStaleDays": 21,
+    "quality.defaultPassScore": 3,
+    "quality.spotCheckPct": 5,
+    "quality.spotCheckReviewedPct": 1,
+    "quality.spotChecksPerDay": 2,
+    "quality.escapeIncident": 3,
+    "policy.authoringApproval": 0,
+    "policy.repeatForIncident": 5
    },
    "playbooks": [],
    "budget": {
@@ -1126,7 +1150,17 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2,
     "memory.guidanceRepeats": 4,
-    "memory.lessonStaleDays": 90
+    "memory.lessonStaleDays": 90,
+    "quality.evidenceRequired": 2,
+    "quality.verifierIndependence": 2,
+    "quality.defaultPassScore": 4,
+    "quality.spotCheckPct": 25,
+    "quality.spotCheckReviewedPct": 8,
+    "quality.spotChecksPerDay": 2,
+    "quality.escapeIncident": 1,
+    "policy.repeatForIncident": 2,
+    "policy.repeatWindowHours": 336,
+    "policy.signalSeverity": 2
    },
    "playbooks": [],
    "budget": {
@@ -1324,7 +1358,17 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2,
     "memory.guidanceRepeats": 4,
-    "memory.lessonStaleDays": 90
+    "memory.lessonStaleDays": 90,
+    "quality.evidenceRequired": 2,
+    "quality.verifierIndependence": 2,
+    "quality.defaultPassScore": 4,
+    "quality.spotCheckPct": 25,
+    "quality.spotCheckReviewedPct": 8,
+    "quality.spotChecksPerDay": 2,
+    "quality.escapeIncident": 1,
+    "policy.repeatForIncident": 2,
+    "policy.repeatWindowHours": 336,
+    "policy.signalSeverity": 2
    },
    "playbooks": [],
    "budget": {
@@ -1489,7 +1533,9 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "program.requestAnswerHours": 12,
     "program.allocationWarnPct": 75,
     "discussion.agentDailyCap": 2,
-    "memory.lessonStaleDays": 30
+    "memory.lessonStaleDays": 30,
+    "quality.verifierIndependence": 0,
+    "quality.spotChecksPerDay": 2
    },
    "playbooks": [],
    "budget": {
@@ -1775,7 +1821,18 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "discussion.autoCloseHours": 72,
     "discussion.agentDailyCap": 2,
     "memory.guidanceRepeats": 4,
-    "memory.lessonStaleDays": 90
+    "memory.lessonStaleDays": 90,
+    "quality.evidenceRequired": 2,
+    "quality.verifierIndependence": 2,
+    "quality.defaultPassScore": 4,
+    "quality.spotCheckPct": 25,
+    "quality.spotCheckReviewedPct": 8,
+    "quality.spotChecksPerDay": 6,
+    "quality.escapeIncident": 1,
+    "policy.authoringApproval": 2,
+    "policy.repeatForIncident": 2,
+    "policy.repeatWindowHours": 336,
+    "policy.signalSeverity": 2
    },
    "playbooks": [],
    "budget": {

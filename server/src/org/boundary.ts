@@ -39,7 +39,9 @@ export type ChangeKind =
   // Work tracking (docs/work-tracking.md): the CEO's bets.
   | 'project_bet' | 'project_appetite' | 'project_kill'
   // Learning as they work (docs/agent-memory.md §12).
-  | 'self_guidance' | 'guidance_proposal' | 'lesson_audience';
+  | 'self_guidance' | 'guidance_proposal' | 'lesson_audience'
+  // Quality control (docs/quality.md): policies as data, quality standards.
+  | 'policy' | 'quality_standard';
 
 /** A proposed self-change, described enough for the table to place it. */
 export interface SelfChange {
@@ -52,6 +54,9 @@ export interface SelfChange {
   withinEnvelope?: boolean;
   /** One line for the card, the audit row and the refusal. */
   summary?: string;
+  /** Policy and quality standard: whether the change loosens the fence
+   *  (retires a policy, lowers its enforcement or a standard's bar). */
+  loosens?: boolean;
 }
 
 export interface BoundaryRule {
@@ -76,6 +81,8 @@ const TUNABLE_ROWS: Array<{ prefix: string; verdict: BoundaryVerdict; reason: st
   { prefix: 'trust.', verdict: 'propose', reason: 'promotion and demotion rules decide how much autonomy is earned — the external-action floor', delegable: false },
   { prefix: 'incidents.', verdict: 'propose', reason: 'containment levels are the safety floor after an incident', delegable: true },
   { prefix: 'acceptance.', verdict: 'propose', reason: 'acceptance settings decide what counts as verified work', delegable: true },
+  { prefix: 'quality.', verdict: 'propose', reason: 'evidence, verifier independence, the pass bar and spot checks decide what counts as verified work', delegable: true },
+  { prefix: 'policy.', verdict: 'propose', reason: 'how policies are approved and when violations escalate is the owner\'s oversight of the rules', delegable: true },
   { prefix: 'signals.', verdict: 'propose', reason: 'signal thresholds decide what the owner and the auditor get to see', delegable: true },
   { prefix: 'pulse.', verdict: 'propose', reason: 'pulse weights decide how health is reported to the owner', delegable: true },
   { prefix: 'slo.', verdict: 'propose', reason: 'SLO targets are the owner\'s promise, not the doer\'s', delegable: true },
@@ -125,6 +132,10 @@ export const BOUNDARY: BoundaryRule[] = [
   { id: 'kill_switch', kind: 'kill_switch', match: 'the organization\'s kill switch', verdict: 'never', reason: 'the owner\'s stop button', delegable: false },
   { id: 'frozen_classes', kind: 'frozen_classes', match: 'action classes frozen by an incident', verdict: 'never', reason: 'a freeze is lifted by the owner resolving the incident', delegable: false },
   { id: 'delegation', kind: 'delegation', match: 'who may decide cards for the owner', verdict: 'never', reason: 'delegating the owner\'s authority is the owner\'s act', delegable: false },
+  { id: 'policy:tighten', kind: 'policy', match: 'a new policy, or a stricter one', verdict: 'alone', reason: 'a rule that only narrows what members may do; the mode and policy.authoringApproval still decide whether it is a card', delegable: true },
+  { id: 'policy:loosen', kind: 'policy', match: 'retiring a policy or weakening its enforcement', verdict: 'propose', reason: 'loosening a rule widens what members may do unattended: the CEO decides', delegable: true },
+  { id: 'quality_standard:tighten', kind: 'quality_standard', match: 'a new quality standard, or a stricter one', verdict: 'alone', reason: 'a standard only raises the bar work must meet; the mode and policy.authoringApproval still decide whether it is a card', delegable: true },
+  { id: 'quality_standard:loosen', kind: 'quality_standard', match: 'retiring a quality standard or lowering its bar', verdict: 'propose', reason: 'lowering the bar changes what counts as done: the CEO decides', delegable: true },
   { id: 'eval_cases', kind: 'eval_cases', match: 'golden-set cases (manual add, retire)', verdict: 'never', reason: 'the yardstick the org is measured by; harvesting adds cases from verified work, nobody edits them by hand but the owner', delegable: false },
 ];
 
@@ -144,6 +155,7 @@ export function ruleFor(change: SelfChange): BoundaryRule {
   if (change.kind === 'reorg') return BOUNDARY.find((b) => b.id === (change.withinUnit === false ? 'reorg:beyond' : 'reorg:unit'))!;
   if (change.kind === 'terminate') return BOUNDARY.find((b) => b.id === (change.withinUnit === false ? 'terminate:beyond' : 'terminate:unit'))!;
   if (change.kind === 'budget') return BOUNDARY.find((b) => b.id === (change.withinEnvelope === false ? 'budget:above' : 'budget:within'))!;
+  if (change.kind === 'policy' || change.kind === 'quality_standard') return BOUNDARY.find((b) => b.id === `${change.kind}:${change.loosens ? 'loosen' : 'tighten'}`)!;
   if (change.kind === 'project_appetite') return BOUNDARY.find((b) => b.id === (change.withinEnvelope === false ? 'project_appetite:beyond' : 'project_appetite:within'))!;
   const row = BOUNDARY.find((b) => b.kind === change.kind);
   if (!row) throw new Error(`no boundary row for "${change.kind}"`);

@@ -51,6 +51,19 @@ export interface TaskBrief { outcome: string; context: string; constraints: stri
 export interface AcceptanceVerdict { outcome: 'none' | 'pass' | 'fail' | 'error'; detail: string; alsoReview: boolean }
 export type AcceptanceGate = (orgId: string, task: OrgTask) => Promise<AcceptanceVerdict>;
 
+/** Quality control (docs/quality.md): OrgQualityService binds these. `submit`
+ *  runs before a submission's checks and reviewer — it throws to refuse
+ *  (the message is the remediation) and may return a note for the timeline;
+ *  `pickReviewer` may replace the reviewer the board picked (verifier
+ *  independence; `undefined` keeps it); `verdict` runs before a verdict
+ *  lands — it throws to refuse (missing scores), may change the verdict
+ *  (below the bar) and records the QC result. */
+export interface QualityGate {
+  submit?(orgId: string, task: OrgTask, input: { evidence?: unknown; note?: string; fromAgentId: string | null; runId?: string | null }): Promise<{ note?: string } | void>;
+  pickReviewer?(orgId: string, task: OrgTask, picked: string | null, agentModels?: Map<string, { provider: string; model: string }>): Promise<string | null | undefined>;
+  verdict?(orgId: string, task: OrgTask, input: { verdict: 'accept' | 'request_changes' | 'escalate'; note?: string; byAgentId?: string | null; byCheck?: boolean; scores?: unknown }): Promise<{ verdict: 'accept' | 'request_changes' | 'escalate'; note?: string } | void>;
+}
+
 /** How a done task was verified, for the board (docs/sensing.md §3). */
 export function verificationOf(t: Pick<OrgTask, 'status' | 'acceptedBy'>): 'check' | 'review' | 'none' | null {
   if (t.status !== 'done') return null;
@@ -171,6 +184,7 @@ export class OrgTasksService {
   ) {}
 
   private acceptanceGate?: AcceptanceGate;
+  private qualityGate?: QualityGate;
   private placer?: TaskPlacer;
   private claimGate?: ClaimGate;
   private managerResolver?: ManagerResolver;
@@ -269,6 +283,8 @@ export class OrgTasksService {
 
   /** OrgSensingService binds the check runner here (docs/sensing.md §3). */
   setAcceptanceGate(gate: AcceptanceGate | undefined): void { this.acceptanceGate = gate; }
+  /** OrgQualityService binds the quality gate (docs/quality.md). */
+  setQualityGate(gate: QualityGate | undefined): void { this.qualityGate = gate; }
 
   /** The task's checks, parsed. */
   checksOf(t: Pick<OrgTask, 'checks'>): Check[] { return parseChecks(t.checks); }
@@ -940,10 +956,14 @@ export class OrgTasksService {
   /** Move to in_review and pick a reviewer when none is set: a different
    *  member than the assignee, preferring one whose provider/model family
    *  differs (§4.6 layer two), falling back to the chief. */
-  async requestReview(orgId: string, taskId: string, input: { note?: string; fromAgentId?: string | null; runId?: string | null; agentModels?: Map<string, { provider: string; model: string }>; reviewerHumanId?: string | null }): Promise<OrgTask> {
+  async requestReview(orgId: string, taskId: string, input: { note?: string; fromAgentId?: string | null; runId?: string | null; agentModels?: Map<string, { provider: string; model: string }>; reviewerHumanId?: string | null; evidence?: unknown }): Promise<OrgTask> {
     const t = await this.get(orgId, taskId);
     if (['done', 'cancelled'].includes(t.status)) throw new BadRequestException(`task is ${t.status}`);
     const org = await this.org.get(orgId);
+    // Quality control (docs/quality.md): evidence and result policies first;
+    // a refusal names what is missing and nothing moves.
+    const quality = this.qualityGate?.submit ? await this.qualityGate.submit(orgId, t, { evidence: input.evidence, note: input.note, fromAgentId: input.fromAgentId ?? null, runId: input.runId ?? null }) : undefined;
+    if (quality?.note) await this.comment(orgId, taskId, { text: quality.note.slice(0, 8_000), fromAgentId: null, wake: false });
     // Executable acceptance (docs/sensing.md §3): the checks run first and,
     // when they settle it, no reviewer — model or human — is asked.
     let checkNote = '';
@@ -1009,6 +1029,9 @@ export class OrgTasksService {
         return mine && theirs && familyOf(theirs) !== familyOf(mine);
       });
       reviewer = head?.agentId ?? differentFamily?.agentId ?? candidates.find((m) => m.agentId === org.chiefOfStaffAgentId)?.agentId ?? candidates[0]?.agentId ?? null;
+      // Verifier independence (docs/quality.md): the quality gate may insist on another model family.
+      const alt = this.qualityGate?.pickReviewer ? await this.qualityGate.pickReviewer(orgId, t, reviewer, input.agentModels).catch(() => undefined) : undefined;
+      if (alt !== undefined) reviewer = alt;
     }
     await this.db.update(orgTasks).set({ status: 'in_review', reviewerAgentId: reviewer, claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));
     await this.recordTransition(orgId, t, 'in_review', input.fromAgentId ? `agent:${input.fromAgentId}` : 'user', 'review requested');
@@ -1035,10 +1058,14 @@ export class OrgTasksService {
     return () => { const i = this.reviewListeners.indexOf(fn); if (i >= 0) this.reviewListeners.splice(i, 1); };
   }
 
-  async review(orgId: string, taskId: string, input: { verdict: 'accept' | 'request_changes' | 'escalate'; note?: string; byAgentId?: string | null; runId?: string | null; byCheck?: boolean }): Promise<OrgTask> {
+  async review(orgId: string, taskId: string, input: { verdict: 'accept' | 'request_changes' | 'escalate'; note?: string; byAgentId?: string | null; runId?: string | null; byCheck?: boolean; scores?: unknown }): Promise<OrgTask> {
     const t = await this.get(orgId, taskId);
     const actor = input.byCheck ? 'check' : input.byAgentId ? `agent:${input.byAgentId}` : 'user';
     if (input.byAgentId && input.byAgentId === t.assigneeAgentId) throw new BadRequestException('a task cannot be reviewed by its own assignee');
+    // Quality control (docs/quality.md): the rubric grades the verdict and
+    // the QC result is recorded; work below the bar goes back for rework.
+    const graded = this.qualityGate?.verdict ? await this.qualityGate.verdict(orgId, t, { verdict: input.verdict, note: input.note, byAgentId: input.byAgentId ?? null, byCheck: input.byCheck, scores: input.scores }) : undefined;
+    if (graded) input = { ...input, verdict: graded.verdict, note: graded.note ?? input.note };
     for (const fn of this.reviewListeners) await Promise.resolve(fn({ orgId, taskId, assigneeAgentId: t.assigneeAgentId, verdict: input.verdict, byAgentId: input.byAgentId ?? null, note: input.note, rounds: t.reviewRounds, byCheck: input.byCheck })).catch(() => undefined);
     if (input.verdict === 'accept') {
       await this.db.update(orgTasks).set({ status: 'done', acceptedBy: 'review', claimedBy: null, claimedAt: null, updatedAt: nowIso() }).where(eq(orgTasks.id, taskId));

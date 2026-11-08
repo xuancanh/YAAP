@@ -78,7 +78,15 @@ export interface ActionHooks {
   revertIncident?(row: ActionRow, note: string): Promise<boolean>;
   /** Append to the org's audit chain (co-signer turns, keys, reverts). */
   audit?(workspaceId: string, entry: { actor: string; action: string; refType: string; refId: string; payload: Record<string, unknown> }): Promise<void>;
+  /** The org's policies over this call (docs/quality.md "Enforcement"):
+   *  null when none applies; `block` refuses it with the remediation,
+   *  `warn` lets it run and tells the agent, `cosign` asks a second agent
+   *  key that judges the named rules. Model-free. */
+  guard?(workspaceId: string, call: { agentId: string | null; sessionId: string; tool: string; input: Record<string, unknown>; cls: ActionClass }): Promise<PolicyGuard | null>;
 }
+
+/** What the policy guard decided for one call. */
+export interface PolicyGuard { outcome: 'block' | 'warn' | 'cosign'; text: string; rules?: string }
 
 /** The plugin-call columns of a row (docs/plugins.md §5.6); null for every other call. */
 export interface PluginCallFields {
@@ -414,7 +422,7 @@ export class ActionsService {
    * Every co-signer turn is audited (the row's keys, the co-signer's inbox,
    * the org audit chain).
    */
-  async coSign(row: ActionRow, call: { name: string; input: Record<string, unknown> }): Promise<{ result: CoSignVerdict & { coSignerAgentId: string; family: string } | null; keys: Record<string, unknown> }> {
+  async coSign(row: ActionRow, call: { name: string; input: Record<string, unknown> }, extraRules = ''): Promise<{ result: CoSignVerdict & { coSignerAgentId: string; family: string } | null; keys: Record<string, unknown> }> {
     const keys = parseKeys(row.keys);
     if (!row.agentId) return { result: null, keys };
     const pick = await this.pickCoSigner(row.workspaceId, row.agentId);
@@ -426,7 +434,7 @@ export class ActionsService {
     const runner = this.coSignFn ?? this.coSignRunner;
     if (!runner) return { result: null, keys };
     const org = await this.trust.orgOf(row.workspaceId);
-    const rules = [org?.rules ? `Standing rules: ${org.rules}` : '', org?.values ? `Values: ${org.values}` : ''].filter(Boolean).join('\n');
+    const rules = [org?.rules ? `Standing rules: ${org.rules}` : '', org?.values ? `Values: ${org.values}` : '', extraRules ? `Policies this call must meet (judge each): ${extraRules}` : ''].filter(Boolean).join('\n');
     let verdict: CoSignVerdict;
     try {
       verdict = await runner({ coSignerAgentId: pick.agentId, actorAgentId: row.agentId, workspaceId: row.workspaceId, call, cls: row.class as ActionClass, rules });
@@ -458,6 +466,12 @@ export class ActionsService {
     }
     if (q.status) conds.push(eq(actionLog.status, q.status));
     return this.db.select().from(actionLog).where(and(...conds)).orderBy(desc(actionLog.createdAt)).limit(limit);
+  }
+
+  /** The org's policies over one call (null: none applies, or no org). */
+  async guard(workspaceId: string, call: { agentId: string | null; sessionId: string; tool: string; input: Record<string, unknown>; cls: ActionClass }): Promise<PolicyGuard | null> {
+    if (!this.hooks.guard) return null;
+    return this.hooks.guard(workspaceId, call).catch(() => null);
   }
 
   /** Whether an incident froze this class for the agent's organization. */

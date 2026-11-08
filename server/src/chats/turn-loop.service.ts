@@ -999,6 +999,8 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
           // stage (a draft) or a second agent key. Computer tools keep their
           // own floor (user turns only, every call asks) and skip it.
           let contract: ContractState | null = null;
+          // A policy warning (docs/quality.md) rides on the call's result.
+          let policyWarning = '';
           // The fixed policy stage for interface operations (docs/plugins.md
           // §4.3): binding, grant, change gate, class, owner policies and
           // budget. It cannot be skipped: without the action contract a
@@ -1054,6 +1056,23 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
                 yield { type: 'tool_result', id: call.id, name: call.name, output: output.slice(0, 500), isError: false };
                 continue;
               }
+              // The organization's policies as data (docs/quality.md
+              // "Enforcement"), model-free: a blocking predicate refuses the
+              // call with its remediation; a warning rides on the result; a
+              // judged policy asks a second agent key that judges it.
+              const guard = await this.actions.guard(session.workspaceId, { agentId: session.agentId ?? null, sessionId: session.id, tool: call.name, input: call.input, cls });
+              if (guard?.outcome === 'block') {
+                const row = await this.actions.start(actx, { key, tool: call.name, input: call.input, cls, decision: 'policy', level: null, prior, plugin: plugin ? plugin.fields as PluginCallFields : null }).catch(() => null);
+                if (row) await this.actions.finish(row, { status: 'refused', note: guard.text }).catch(() => undefined);
+                if (row && plugin) await stage?.settle(row, 'refused').catch(() => undefined);
+                const output = guard.text;
+                await this.repo.appendMessage({ sessionId, turnId: turn.id, role: 'tool', content: output, toolName: call.name });
+                history.push({ role: 'tool', content: output, toolCallId: call.id, isError: true });
+                toolRecords.push({ tool: call.name, input: call.input, result: output, approved: 'deny', isError: true, actionClass: cls, ...(row ? { actionId: row.id } : {}) });
+                yield { type: 'tool_result', id: call.id, name: call.name, output, isError: true, actionClass: cls, ...(row ? { actionId: row.id } : {}) };
+                continue;
+              }
+              if (guard?.outcome === 'warn') policyWarning = guard.text;
               let decision: TrustDecision | null = null;
               let level: TrustLevel | null = null;
               const hasStaging = Boolean(stagingOf(call.name)?.implemented && this.connections?.owns(call.name));
@@ -1076,6 +1095,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
               // An incident froze this class for the member's organization
               // (item 29): held for the owner's key whatever the level, in
               // every kind of session.
+              if (guard?.outcome === 'cosign' && (decision === 'run' || decision === 'run_notify')) decision = 'cosign';
               const frozen = await this.actions.isFrozen(session.workspaceId, session.agentId ?? null, cls);
               if (frozen) decision = 'hold';
               const row = await this.actions.start(actx, { key, tool: call.name, input: call.input, cls, decision: frozen ? 'frozen' : plugin?.preKeyed ? 'change_key' : free ? 'free' : decision ?? 'legacy', level, prior, plugin: plugin ? plugin.fields as PluginCallFields : null });
@@ -1084,7 +1104,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
               // this call is that one-shot allowed-once.
               if (plugin?.preKeyed && !frozen) await this.actions.markDecided(row, 'allowed-once', plugin.preKeyed.by, plugin.preKeyed.requestId || undefined);
               if (decision === 'cosign') {
-                const cs = await this.actions.coSign(row, { name: call.name, input: call.input });
+                const cs = await this.actions.coSign(row, { name: call.name, input: call.input }, guard?.outcome === 'cosign' ? guard.rules ?? guard.text : '');
                 if (cs.result?.verdict === 'approve') {
                   contract.cosigned = true;
                 } else if (cs.result?.verdict === 'deny') {
@@ -1316,6 +1336,7 @@ export class TurnLoopService implements OnModuleDestroy, OnApplicationBootstrap 
               output = await this.wrapConnectionContent(session, output, connOwner, actor, nameOf(connOwner));
             }
           }
+          if (policyWarning && !isError) output = `${output}\n\n${policyWarning}`;
           if (contract && this.actions) {
             const status = reviewDenial || decision === 'deny' ? 'denied' : isError ? 'failed' : 'succeeded';
             const keys = status === 'succeeded' && TWO_KEY_CLASSES.includes(contract.cls) && verdict === 'ask'

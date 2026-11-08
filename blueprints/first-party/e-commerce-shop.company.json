@@ -280,7 +280,14 @@
     "discussion.autoMoveMode": 2,
     "discussion.agentDailyCap": 2,
     "memory.guidanceRepeats": 2,
-    "memory.lessonStaleDays": 21
+    "memory.lessonStaleDays": 21,
+    "quality.defaultPassScore": 3,
+    "quality.spotCheckPct": 5,
+    "quality.spotCheckReviewedPct": 1,
+    "quality.spotChecksPerDay": 2,
+    "quality.escapeIncident": 3,
+    "policy.authoringApproval": 0,
+    "policy.repeatForIncident": 5
   },
   "playbooks": [],
   "budget": {

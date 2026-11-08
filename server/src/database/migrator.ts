@@ -2551,6 +2551,56 @@ const MIGRATIONS: Migration[] = [
         WHERE "kind" = 'loop_error' AND "readAt" IS NULL AND "body" ~* '^(this|the) operation was aborted\\.?$'`);
     },
   },
+  {
+    id: '0095-quality',
+    up: async (db) => {
+      // Quality control of results and policies (docs/quality.md): quality
+      // standards (criteria graded 1–5 with a pass bar, scoped to the
+      // company, a unit, a role, a deliverable kind, a project, a task or a
+      // process step), policies as enforceable data with their violations,
+      // one QC result per review round or spot check, and explicit
+      // standard links. New tables only; idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS org_quality_standards (
+        "accountId" TEXT NOT NULL DEFAULT 'single', "id" TEXT PRIMARY KEY, "orgId" TEXT NOT NULL,
+        "slug" TEXT NOT NULL, "name" TEXT NOT NULL, "scopeKind" TEXT NOT NULL DEFAULT 'company', "scopeRef" TEXT NOT NULL DEFAULT '',
+        "unitId" TEXT, "summary" TEXT NOT NULL DEFAULT '', "criteria" TEXT NOT NULL DEFAULT '[]', "passScore" REAL NOT NULL DEFAULT 3.5,
+        "requireEvidence" INTEGER NOT NULL DEFAULT 1, "verifier" TEXT NOT NULL DEFAULT 'default', "version" INTEGER NOT NULL DEFAULT 1,
+        "status" TEXT NOT NULL DEFAULT 'active', "source" TEXT NOT NULL DEFAULT 'user', "ownerAgentId" TEXT, "createdBy" TEXT NOT NULL DEFAULT 'user',
+        "approvalId" TEXT, "pending" TEXT NOT NULL DEFAULT '', "createdAt" TEXT NOT NULL, "updatedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_quality_standards_org ON org_quality_standards ("orgId", "status")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_policies (
+        "accountId" TEXT NOT NULL DEFAULT 'single', "id" TEXT PRIMARY KEY, "orgId" TEXT NOT NULL, "key" TEXT NOT NULL,
+        "statement" TEXT NOT NULL, "rationale" TEXT NOT NULL DEFAULT '', "scopeKind" TEXT NOT NULL DEFAULT 'company', "scopeRef" TEXT NOT NULL DEFAULT '',
+        "kind" TEXT NOT NULL DEFAULT 'predicate', "rule" TEXT NOT NULL DEFAULT '{}', "appliesAt" TEXT NOT NULL DEFAULT 'action',
+        "severity" TEXT NOT NULL DEFAULT 'medium', "enforcement" TEXT NOT NULL DEFAULT 'block', "remediation" TEXT NOT NULL DEFAULT '',
+        "ownerAgentId" TEXT, "version" INTEGER NOT NULL DEFAULT 1, "status" TEXT NOT NULL DEFAULT 'active', "source" TEXT NOT NULL DEFAULT 'user',
+        "createdBy" TEXT NOT NULL DEFAULT 'user', "approvalId" TEXT, "pending" TEXT NOT NULL DEFAULT '', "createdAt" TEXT NOT NULL, "updatedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_policies_org ON org_policies ("orgId", "status")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_policy_violations (
+        "accountId" TEXT NOT NULL DEFAULT 'single', "id" TEXT PRIMARY KEY, "orgId" TEXT NOT NULL, "policyId" TEXT NOT NULL,
+        "policyVersion" INTEGER NOT NULL DEFAULT 1, "agentId" TEXT NOT NULL DEFAULT '', "stage" TEXT NOT NULL DEFAULT 'action',
+        "tool" TEXT NOT NULL DEFAULT '', "actionId" TEXT, "taskId" TEXT, "inputHash" TEXT NOT NULL DEFAULT '', "detail" TEXT NOT NULL DEFAULT '',
+        "outcome" TEXT NOT NULL DEFAULT 'blocked', "status" TEXT NOT NULL DEFAULT 'open', "approvalId" TEXT, "createdAt" TEXT NOT NULL, "decidedAt" TEXT
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_policy_violations_org ON org_policy_violations ("orgId", "policyId")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_qc_results (
+        "accountId" TEXT NOT NULL DEFAULT 'single', "id" TEXT PRIMARY KEY, "orgId" TEXT NOT NULL, "taskId" TEXT NOT NULL,
+        "kind" TEXT NOT NULL DEFAULT 'review', "standardId" TEXT, "standardVersion" INTEGER NOT NULL DEFAULT 0, "rubric" TEXT NOT NULL DEFAULT '[]',
+        "passScore" REAL NOT NULL DEFAULT 0, "makerAgentId" TEXT, "unitId" TEXT, "verifier" TEXT NOT NULL DEFAULT '',
+        "independence" TEXT NOT NULL DEFAULT 'unknown', "round" INTEGER NOT NULL DEFAULT 0, "outcome" TEXT NOT NULL DEFAULT 'pending', "score" REAL,
+        "scores" TEXT NOT NULL DEFAULT '[]', "evidence" TEXT NOT NULL DEFAULT '[]', "checks" TEXT NOT NULL DEFAULT '[]', "note" TEXT NOT NULL DEFAULT '',
+        "spotTaskId" TEXT, "escapedAt" TEXT, "escapeReason" TEXT NOT NULL DEFAULT '', "createdAt" TEXT NOT NULL, "decidedAt" TEXT
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_qc_results_task ON org_qc_results ("orgId", "taskId")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_quality_links (
+        "accountId" TEXT NOT NULL DEFAULT 'single', "id" TEXT PRIMARY KEY, "orgId" TEXT NOT NULL, "standardId" TEXT NOT NULL,
+        "targetKind" TEXT NOT NULL, "targetId" TEXT NOT NULL, "createdBy" TEXT NOT NULL DEFAULT 'user', "createdAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_quality_links_target ON org_quality_links ("orgId", "targetKind", "targetId")`);
+    },
+  },
 ];
 
 /**

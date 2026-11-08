@@ -2701,3 +2701,165 @@ export const kitRevisions = pgTable('kit_revisions', {
   appliedAt: text('appliedAt').notNull(),
   rolledBackAt: text('rolledBackAt'),
 });
+
+// ---- quality control: results and policies (docs/quality.md, migration 0095) ----
+
+/** A quality standard: what a deliverable must meet to count as done. One
+ *  scope (company | unit | role | deliverable | project | task |
+ *  process_step) with its ref; `criteria` is the unified acceptance list and
+ *  rubric (JSON [{ id, text, weight, min?, evidence? }]) graded 1–5,
+ *  `passScore` the weighted bar. Revised in place: `version` counts, and
+ *  every QC result keeps the rubric it was graded against. */
+export const orgQualityStandards = pgTable('org_quality_standards', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  slug: text('slug').notNull(),
+  name: text('name').notNull(),
+  /** company | unit | role | deliverable | project | task | process_step. */
+  scopeKind: text('scopeKind').notNull().default('company'),
+  /** The unit id, role title, deliverable kind, project id, task id or step ref; '' for company. */
+  scopeRef: text('scopeRef').notNull().default(''),
+  /** Narrows a deliverable or role standard to one unit (a head's own); null = the company. */
+  unitId: text('unitId'),
+  summary: text('summary').notNull().default(''),
+  criteria: text('criteria').notNull().default('[]'),
+  passScore: real('passScore').notNull().default(3.5),
+  requireEvidence: integer('requireEvidence').notNull().default(1),
+  /** default | agent | family: who may verify (a different agent; another model family). */
+  verifier: text('verifier').notNull().default('default'),
+  version: integer('version').notNull().default(1),
+  /** proposed | active | retired | rejected. */
+  status: text('status').notNull().default('active'),
+  /** template:<id> | agent:<id> | user | kit:<id>. */
+  source: text('source').notNull().default('user'),
+  ownerAgentId: text('ownerAgentId'),
+  createdBy: text('createdBy').notNull().default('user'),
+  /** The quality_change card while proposed or while a revision waits. */
+  approvalId: text('approvalId'),
+  /** A pending revision (JSON of the proposed fields) while its card is open. */
+  pending: text('pending').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt').notNull(),
+});
+
+/** A policy as enforceable data: a deterministic predicate over a tool
+ *  call's arguments or a result's text (`kind` predicate), or a rule an
+ *  independent checker judges (`kind` judged). Enforced before outward and
+ *  mutating calls (`appliesAt` action | both) and at result review
+ *  (result | both). */
+export const orgPolicies = pgTable('org_policies', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  key: text('key').notNull(),
+  statement: text('statement').notNull(),
+  rationale: text('rationale').notNull().default(''),
+  /** company | unit | role | action_class | deliverable. */
+  scopeKind: text('scopeKind').notNull().default('company'),
+  scopeRef: text('scopeRef').notNull().default(''),
+  /** predicate | judged. */
+  kind: text('kind').notNull().default('predicate'),
+  /** JSON { tools?, classes?, when?, require?, forbid? } (quality-model.ts PolicyRule). */
+  rule: text('rule').notNull().default('{}'),
+  /** action | result | both. */
+  appliesAt: text('appliesAt').notNull().default('action'),
+  /** low | medium | high | critical. */
+  severity: text('severity').notNull().default('medium'),
+  /** block | warn | log. */
+  enforcement: text('enforcement').notNull().default('block'),
+  /** What to do instead, told to the agent with every refusal or warning. */
+  remediation: text('remediation').notNull().default(''),
+  ownerAgentId: text('ownerAgentId'),
+  version: integer('version').notNull().default(1),
+  /** proposed | active | retired | rejected. */
+  status: text('status').notNull().default('active'),
+  source: text('source').notNull().default('user'),
+  createdBy: text('createdBy').notNull().default('user'),
+  approvalId: text('approvalId'),
+  pending: text('pending').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt').notNull(),
+});
+
+/** One policy violation: at an action (blocked, warned or logged) or at a
+ *  result review. A blocked call may be waived once by a `policy_exception`
+ *  card; `inputHash` is the call it waives. */
+export const orgPolicyViolations = pgTable('org_policy_violations', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  policyId: text('policyId').notNull(),
+  policyVersion: integer('policyVersion').notNull().default(1),
+  agentId: text('agentId').notNull().default(''),
+  /** action | result. */
+  stage: text('stage').notNull().default('action'),
+  tool: text('tool').notNull().default(''),
+  actionId: text('actionId'),
+  taskId: text('taskId'),
+  inputHash: text('inputHash').notNull().default(''),
+  detail: text('detail').notNull().default(''),
+  /** blocked | warned | logged. */
+  outcome: text('outcome').notNull().default('blocked'),
+  /** open | exception_requested | waived | upheld | used. */
+  status: text('status').notNull().default('open'),
+  approvalId: text('approvalId'),
+  createdAt: text('createdAt').notNull(),
+  decidedAt: text('decidedAt'),
+});
+
+/** A QC result: one per review round of a task (or a spot check of
+ *  accepted work). Opened at submission with the evidence and the
+ *  model-free checks, completed at the verdict with the per-criterion
+ *  scores. `escapedAt` marks accepted work later found defective (reopened,
+ *  an incident on the task, a failed spot check). */
+export const orgQcResults = pgTable('org_qc_results', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  taskId: text('taskId').notNull(),
+  /** review | spot_check. */
+  kind: text('kind').notNull().default('review'),
+  standardId: text('standardId'),
+  standardVersion: integer('standardVersion').notNull().default(0),
+  /** The criteria graded against (snapshot), JSON. */
+  rubric: text('rubric').notNull().default('[]'),
+  passScore: real('passScore').notNull().default(0),
+  makerAgentId: text('makerAgentId'),
+  unitId: text('unitId'),
+  /** agent:<id> | human:<id> | user | check. */
+  verifier: text('verifier').notNull().default(''),
+  /** different_family | same_family | human | check | unknown. */
+  independence: text('independence').notNull().default('unknown'),
+  round: integer('round').notNull().default(0),
+  /** pending | pass | rework | fail. */
+  outcome: text('outcome').notNull().default('pending'),
+  score: real('score'),
+  /** JSON [{ criterion, score, note, refs }]. */
+  scores: text('scores').notNull().default('[]'),
+  /** JSON [{ criterion, refs: [{ raw, kind, ok, detail }] }]. */
+  evidence: text('evidence').notNull().default('[]'),
+  /** JSON [{ name, ok, detail }] — the model-free checks at submission. */
+  checks: text('checks').notNull().default('[]'),
+  note: text('note').notNull().default(''),
+  /** The spot check's own task, for kind spot_check. */
+  spotTaskId: text('spotTaskId'),
+  escapedAt: text('escapedAt'),
+  escapeReason: text('escapeReason').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  decidedAt: text('decidedAt'),
+});
+
+/** An explicit standard on one task, project or process step (the process
+ *  engine attaches a step's standard by id). */
+export const orgQualityLinks = pgTable('org_quality_links', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  standardId: text('standardId').notNull(),
+  /** task | project | process_step. */
+  targetKind: text('targetKind').notNull(),
+  targetId: text('targetId').notNull(),
+  createdBy: text('createdBy').notNull().default('user'),
+  createdAt: text('createdAt').notNull(),
+});

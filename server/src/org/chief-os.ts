@@ -31,6 +31,7 @@ import { deriveMeetingTunables } from './meeting-tunables';
 import { deriveWorkTunables } from './work-tunables';
 import { deriveMemoryTunables } from './memory-tunables';
 import { deriveProgramTunables } from './program-tunables';
+import { deriveQualityTunables } from './quality-tunables';
 import { deriveDiscussionTunables } from '../groupchat/discussion-tunables';
 // The assurance keys (audit.assuranceDebounceHours) join the registry at import.
 import './org-assurance-tunables';
@@ -159,6 +160,8 @@ export function deriveOperatingSystem(p: ProfileInput): OperatingSystemPlan {
   for (const t of deriveDiscussionTunables(d)) set(t.key, t.value, t.why);
   // Learning (docs/agent-memory.md §12): when a lesson may change a charter, when one goes stale.
   for (const t of deriveMemoryTunables(d)) set(t.key, t.value, t.why);
+  // Quality control (docs/quality.md): evidence, verifier independence, the pass bar, spot checks, policy approval.
+  for (const t of deriveQualityTunables(d)) set(t.key, t.value, t.why);
 
   const decisionProtocol = {
     clan: 'Consensus-seeking with one named final decider; dissent is recorded, then the decider decides.',

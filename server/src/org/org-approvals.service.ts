@@ -36,8 +36,8 @@ import { govTunable } from './governance-tunables';
 import { KnowledgeService } from '../knowledge/knowledge.service';
 
 export type OrgApproval = typeof orgApprovals.$inferSelect;
-export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation' | 'resource_conflict' | 'kit_change' | 'plugin_change';
-export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment', 'member_settings', 'project_now', 'project_appetite', 'project_kill', 'project_allocation', 'resource_conflict', 'kit_change', 'plugin_change'];
+export type ApprovalKind = 'hire' | 'scope_widen' | 'reorg' | 'budget_raise' | 'strategy' | 'external' | 'terminate' | 'escalation' | 'tune' | 'cadence' | 'routing' | 'charter_change' | 'blueprint' | 'human_review' | 'metric_source' | 'two_key' | 'experiment' | 'member_settings' | 'project_now' | 'project_appetite' | 'project_kill' | 'project_allocation' | 'resource_conflict' | 'kit_change' | 'plugin_change' | 'quality_change' | 'policy_exception';
+export const APPROVAL_KINDS: ApprovalKind[] = ['hire', 'scope_widen', 'reorg', 'budget_raise', 'strategy', 'external', 'terminate', 'escalation', 'tune', 'cadence', 'routing', 'charter_change', 'blueprint', 'human_review', 'metric_source', 'two_key', 'experiment', 'member_settings', 'project_now', 'project_appetite', 'project_kill', 'project_allocation', 'resource_conflict', 'kit_change', 'plugin_change', 'quality_change', 'policy_exception'];
 
 /** Another domain's applier for an approval kind it owns (`cadence` is
  *  OrgMeetingsService's, item 19; `blueprint` is OrgBlueprintsService's,
@@ -422,7 +422,8 @@ export class OrgApprovalsService {
       // action contract's two-key hold; work tracking's project bets,
       // appetite decisions and kills (OrgProjectsService, docs/work-tracking.md);
       // a kit or plugin change an agent proposed (OrgFoundryTools, docs/foundry.md §4.7);
-      // the program matrix's escalated resource request (docs/work-tracking.md).
+      // the program matrix's escalated resource request (docs/work-tracking.md);
+      // a policy or standard change and a one-time policy exception (OrgQualityService, docs/quality.md).
       case 'cadence':
       case 'charter_change':
       case 'metric_source':
@@ -435,6 +436,8 @@ export class OrgApprovalsService {
       case 'resource_conflict':
       case 'kit_change':
       case 'plugin_change':
+      case 'quality_change':
+      case 'policy_exception':
       case 'experiment': {
         // Kinds another module owns (the meetings module's cadence, the memory module's charter change).
         const fn = this.appliers.get(kind);
@@ -626,6 +629,8 @@ export function summarize(kind: string, payload: Record<string, unknown>): strin
     case 'project_kill': return `kill ${String(payload.projectKey ?? '')} "${String(payload.title ?? '')}"`.slice(0, 200);
     case 'kit_change':
     case 'plugin_change': return `${String(payload.action ?? 'install')} the ${kind === 'kit_change' ? 'kit' : 'plugin'} ${String(payload.name ?? payload.id ?? '')}${payload.version ? ` ${String(payload.version)}` : ''}: ${String(payload.why ?? '')}`.slice(0, 200);
+    case 'quality_change': return `${String(payload.action ?? 'set')} ${payload.target === 'policy' ? 'policy' : 'quality standard'} "${String(payload.name ?? payload.key ?? '')}"${payload.summary ? `: ${String(payload.summary)}` : ''}`.slice(0, 200);
+    case 'policy_exception': return `exception to policy "${String(payload.policyKey ?? '')}" for ${String(payload.agentName ?? 'a member')}: ${String(payload.tool ?? 'a call')}${payload.why ? ` — ${String(payload.why)}` : ''}`.slice(0, 200);
     case 'two_key': return `${payload.staged ? 'send staged' : 'run held'} ${String(payload.tool ?? 'action')} (${String(payload.class ?? '').replace(/_/g, ' ')}): ${String(payload.summary ?? '')}`.slice(0, 160);
     default: return kind;
   }

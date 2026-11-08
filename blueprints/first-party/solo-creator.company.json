@@ -136,7 +136,9 @@
     "program.requestAnswerHours": 12,
     "program.allocationWarnPct": 75,
     "discussion.agentDailyCap": 2,
-    "memory.lessonStaleDays": 30
+    "memory.lessonStaleDays": 30,
+    "quality.verifierIndependence": 0,
+    "quality.spotChecksPerDay": 2
   },
   "playbooks": [],
   "budget": {

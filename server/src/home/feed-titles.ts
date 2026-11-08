@@ -107,6 +107,14 @@ function approvalTitle(kind: string, who: string, facts: Facts | undefined, fall
     case 'project_appetite': return `${f(facts, 'projectKey') || 'A project'} used up its appetite: extend, cut or stop it`;
     case 'project_allocation': return `Put ${agent} on ${f(facts, 'projectKey') || 'a project'}${fn(facts, 'allocation') ? ` at ${fn(facts, 'allocation')}%` : ''}`;
     case 'project_kill': return `Stop ${f(facts, 'projectKey') || 'a project'}${f(facts, 'title') ? ` (${clipWords(f(facts, 'title'), 50)})` : ''}`;
+    // Quality control (docs/quality.md): a policy or standard change, a one-time exception to a blocked call.
+    case 'quality_change': {
+      const what = f(facts, 'target') === 'policy' ? 'policy' : 'quality standard';
+      const name = clipWords(f(facts, 'name') || f(facts, 'key') || 'untitled', 60);
+      const verb = f(facts, 'action') === 'retire' ? 'retire the' : f(facts, 'action') === 'revise' ? 'change the' : 'add the';
+      return by('wants to', `${verb} ${what} "${name}"`);
+    }
+    case 'policy_exception': return `${upperFirst(f(facts, 'agentName') || 'A member')} asks to break policy "${clipWords(f(facts, 'policyKey') || 'a policy', 50)}" once${f(facts, 'tool') ? ` for ${f(facts, 'tool')}` : ''}`;
     default: return clipWords(upperFirst(fallback), 110);
   }
 }
@@ -127,6 +135,8 @@ function approvalBody(kind: string, facts: Facts | undefined): string {
       return asked.length ? `Asked: ${asked.join(' and ')}.` : '';
     }
     case 'routing': return f(facts, 'from') ? `It runs on ${f(facts, 'from')} today.` : '';
+    case 'quality_change': return firstSentence(f(facts, 'summary'), 200);
+    case 'policy_exception': return [f(facts, 'statement') ? `The rule: ${firstSentence(f(facts, 'statement'), 140)}` : '', f(facts, 'why') ? `Why: ${firstSentence(f(facts, 'why'), 160)}` : ''].filter(Boolean).join(' ');
     case 'external': { const d = f(facts, 'description'); return d && firstSentence(d, 110) !== d ? d : ''; }
     default: return '';
   }
