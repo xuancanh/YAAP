@@ -33,6 +33,7 @@ import { deriveMemoryTunables } from './memory-tunables';
 import { deriveProgramTunables } from './program-tunables';
 import { deriveQualityTunables } from './quality-tunables';
 import { deriveProcessTunables } from './process-tunables';
+import { deriveServiceTunables } from './service-tunables';
 import { deriveDiscussionTunables } from '../groupchat/discussion-tunables';
 import { deriveAlignmentTunables } from './alignment';
 // The assurance keys (audit.assuranceDebounceHours) join the registry at import.
@@ -168,6 +169,8 @@ export function deriveOperatingSystem(p: ProfileInput): OperatingSystemPlan {
   for (const t of deriveAlignmentTunables(d)) set(t.key, t.value, t.why);
   // Processes (docs/processes.md): MUST enforcement, edit approval, revision threshold, SLAs, loops, reviews.
   for (const t of deriveProcessTunables(d)) set(t.key, t.value, t.why);
+  // Services (docs/services.md): accept and resolve SLAs, breach action, repeat threshold, edit approval.
+  for (const t of deriveServiceTunables(d)) set(t.key, t.value, t.why);
 
   const decisionProtocol = {
     clan: 'Consensus-seeking with one named final decider; dissent is recorded, then the decider decides.',
@@ -340,6 +343,8 @@ export function seedArtifacts(plan: OperatingSystemPlan, ctx: SeedContext): Arra
     `# Handoff SLAs — ${ctx.orgName}`,
     '',
     `*Each recurring handoff between functions has an SLA, a named owner on each side and a timer. Default SLA: ${v('chief.handoffSlaHours')} h (chief.handoffSlaHours). When a timer expires the item goes to the shared manager or into /org/issues.md; the chief does not resolve it.*`,
+    '',
+    '*What a department offers others is its service catalog (People › Services; org_services): each service carries its own accept and resolve SLAs and breaches climb the provider\'s line on their own. This file keeps the handoffs no service covers yet.*',
     '',
     '| Handoff | From (owner) | To (owner) | SLA | Breaches this month | Note |',
     '|---|---|---|---|---|---|',

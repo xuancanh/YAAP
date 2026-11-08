@@ -2765,6 +2765,81 @@ const MIGRATIONS: Migration[] = [
       await db.query(`CREATE INDEX IF NOT EXISTS idx_org_tasks_process_run ON org_tasks ("processRunId")`);
     },
   },
+  {
+    id: '0098-services',
+    up: async (db) => {
+      // Services (docs/services.md): each department's catalog of what other
+      // functions may ask of it, with request fields and accept / resolve
+      // SLAs, and the requests made of it (SR-n). Idempotent.
+      await db.query(`CREATE TABLE IF NOT EXISTS org_services (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "unitId" TEXT,
+        "name" TEXT NOT NULL,
+        "title" TEXT NOT NULL,
+        "description" TEXT NOT NULL DEFAULT '',
+        "fields" TEXT NOT NULL DEFAULT '[]',
+        "ownerRole" TEXT NOT NULL DEFAULT 'head',
+        "processId" TEXT,
+        "acceptSlaHours" REAL NOT NULL,
+        "resolveSlaHours" REAL NOT NULL,
+        "status" TEXT NOT NULL DEFAULT 'active',
+        "version" INTEGER NOT NULL DEFAULT 1,
+        "history" TEXT NOT NULL DEFAULT '[]',
+        "pending" TEXT NOT NULL DEFAULT '',
+        "templateId" TEXT NOT NULL DEFAULT '',
+        "source" TEXT NOT NULL DEFAULT 'authored',
+        "createdBy" TEXT NOT NULL DEFAULT '',
+        "createdAt" TEXT NOT NULL,
+        "updatedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_services_name ON org_services ("orgId", "name")`);
+      await db.query(`CREATE TABLE IF NOT EXISTS org_service_requests (
+        "accountId" TEXT NOT NULL DEFAULT 'single',
+        "id" TEXT PRIMARY KEY,
+        "orgId" TEXT NOT NULL,
+        "key" TEXT NOT NULL,
+        "serviceId" TEXT,
+        "serviceVersion" INTEGER,
+        "title" TEXT NOT NULL,
+        "fields" TEXT NOT NULL DEFAULT '{}',
+        "why" TEXT NOT NULL DEFAULT '',
+        "neededBy" TEXT,
+        "servesKind" TEXT NOT NULL DEFAULT '',
+        "servesId" TEXT,
+        "servesLabel" TEXT NOT NULL DEFAULT '',
+        "requester" TEXT NOT NULL,
+        "requesterAgentId" TEXT,
+        "requesterUnitId" TEXT,
+        "providerUnitId" TEXT,
+        "status" TEXT NOT NULL DEFAULT 'open',
+        "runId" TEXT,
+        "acceptTaskId" TEXT,
+        "acceptSlaHours" REAL NOT NULL DEFAULT 0,
+        "resolveSlaHours" REAL NOT NULL DEFAULT 0,
+        "acceptDueAt" TEXT,
+        "resolveDueAt" TEXT,
+        "committedDue" TEXT,
+        "counter" TEXT NOT NULL DEFAULT '',
+        "declineReason" TEXT NOT NULL DEFAULT '',
+        "thread" TEXT NOT NULL DEFAULT '[]',
+        "answeredAt" TEXT,
+        "acceptedAt" TEXT,
+        "resolvedAt" TEXT,
+        "acceptBreachedAt" TEXT,
+        "resolveBreachedAt" TEXT,
+        "breaches" INTEGER NOT NULL DEFAULT 0,
+        "breachApprovalId" TEXT,
+        "needKey" TEXT NOT NULL DEFAULT '',
+        "suggestedAt" TEXT,
+        "createdAt" TEXT NOT NULL,
+        "updatedAt" TEXT NOT NULL
+      )`);
+      await db.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_org_service_requests_key ON org_service_requests ("orgId", "key")`);
+      await db.query(`CREATE INDEX IF NOT EXISTS idx_org_service_requests_status ON org_service_requests ("orgId", "status")`);
+    },
+  },
 ];
 
 /**

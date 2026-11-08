@@ -305,7 +305,12 @@
     "process.metricsWindowRuns": 10,
     "process.maxActiveRuns": 3,
     "process.defaultSlaHours": 8,
-    "process.reviewCadenceDays": 7
+    "process.reviewCadenceDays": 7,
+    "service.acceptSlaHours": 4,
+    "service.resolveSlaHours": 48,
+    "service.repeatWindowDays": 14,
+    "service.editApproval": 0,
+    "service.metricsWindowDays": 14
   },
   "playbooks": [],
   "budget": {

@@ -45,7 +45,9 @@ export type ChangeKind =
   // CEO alignment (docs/alignment.md): aligning direction, strategy, OKRs, bets.
   | 'alignment'
   // Processes (docs/processes.md): a process definition (a new version, a retirement, a rollback).
-  | 'process';
+  | 'process'
+  // Services (docs/services.md): a department's service catalog entry (create, edit, retire).
+  | 'service';
 
 /** A proposed self-change, described enough for the table to place it. */
 export interface SelfChange {
@@ -95,6 +97,7 @@ const TUNABLE_ROWS: Array<{ prefix: string; verdict: BoundaryVerdict; reason: st
   { prefix: 'seat.', verdict: 'propose', reason: 'deadlines and default actions decide what silence from the owner means', delegable: false },
   { prefix: 'alignment.', verdict: 'propose', reason: 'who aligns direction, strategy, OKRs and bets — and how much may change before it is asked again — is the CEO\'s oversight of the company\'s intent (docs/alignment.md)', delegable: false },
   { prefix: 'process.', verdict: 'propose', reason: 'how hard a standard binds and who approves changes to it are the owner\'s (docs/processes.md)', delegable: true },
+  { prefix: 'service.', verdict: 'propose', reason: 'how fast a department must answer and what silence does are the owner\'s promise to the company (docs/services.md)', delegable: true },
   { prefix: 'chief.proxyLevel', verdict: 'propose', reason: 'the archetype dial widens what the chief does on the CEO\'s behalf; proxy scope is earned one class at a time, never self-granted (docs/chief-of-staff.md)', delegable: false },
   { prefix: '', verdict: 'alone', reason: 'a tunable within its bound: the bound is the safety floor and lives in code', delegable: true },
 ];
@@ -107,6 +110,8 @@ export const BOUNDARY: BoundaryRule[] = [
   { id: 'playbook', kind: 'playbook', match: 'playbook activation (new version)', verdict: 'alone', reason: 'a playbook is reviewed by a peer and its new version replays the golden set first', delegable: true },
   { id: 'process:own', kind: 'process', match: 'a process the actor owns (the chief: any; a head: its unit\'s)', verdict: 'alone', reason: 'every edit is a new version with its author and reason, the old ones stay and a rollback is one call; process.editApproval decides which edits still wait for the editor\'s manager', delegable: true },
   { id: 'process:beyond', kind: 'process', match: 'a process the actor does not own (another unit\'s, or the company\'s for a head)', verdict: 'propose', reason: 'a standard another unit runs by is changed by its owner: propose it', delegable: true },
+  { id: 'service:own', kind: 'service', match: 'a service of the actor\'s own catalog (the chief: any; a head: its unit\'s)', verdict: 'alone', reason: 'every change bumps the version with its author and reason; service.editApproval decides which changes (a looser SLA, fewer required fields) still wait for the editor\'s manager', delegable: true },
+  { id: 'service:beyond', kind: 'service', match: 'another department\'s service (or the company\'s for a head)', verdict: 'propose', reason: 'a department\'s promise to the company is changed by that department: propose it', delegable: true },
   { id: 'charter', kind: 'charter', match: 'a member\'s charter', verdict: 'experiment', reason: 'a charter changes how a member works: it must be measured, not just made', delegable: true },
   { id: 'self_guidance', kind: 'self_guidance', match: 'a member\'s own "How I work" notes and its own lessons', verdict: 'alone', reason: 'the member\'s working notes: they change how it works only within its charter, every change names the lessons it came from, and a person can edit or undo it', delegable: true },
   { id: 'guidance_proposal', kind: 'guidance_proposal', match: 'a charter or playbook change raised by a repeated lesson', verdict: 'propose', reason: 'a lesson that keeps repeating may change the charter or a playbook only as a proposal: the CEO decides the charter card, the playbook owner and its reviewer the revision', delegable: true },
@@ -168,6 +173,7 @@ export function ruleFor(change: SelfChange): BoundaryRule {
   if (change.kind === 'policy' || change.kind === 'quality_standard') return BOUNDARY.find((b) => b.id === `${change.kind}:${change.loosens ? 'loosen' : 'tighten'}`)!;
   if (change.kind === 'alignment') return BOUNDARY.find((b) => b.id === (change.key === 'ceo' ? 'alignment:ceo' : 'alignment:delegated'))!;
   if (change.kind === 'process') return BOUNDARY.find((b) => b.id === (change.withinUnit === false ? 'process:beyond' : 'process:own'))!;
+  if (change.kind === 'service') return BOUNDARY.find((b) => b.id === (change.withinUnit === false ? 'service:beyond' : 'service:own'))!;
   if (change.kind === 'project_appetite') return BOUNDARY.find((b) => b.id === (change.withinEnvelope === false ? 'project_appetite:beyond' : 'project_appetite:within'))!;
   const row = BOUNDARY.find((b) => b.kind === change.kind);
   if (!row) throw new Error(`no boundary row for "${change.kind}"`);

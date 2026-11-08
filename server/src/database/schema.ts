@@ -3066,3 +3066,97 @@ export const orgProcessEvents = pgTable('org_process_events', {
   detail: text('detail').notNull().default('{}'),
   at: text('at').notNull(),
 });
+
+/** Services (docs/services.md, migration 0098): a department's catalog of
+ *  what other functions may ask of it, each with the fields a requester
+ *  must give, the role that answers, the process a request runs (null =
+ *  the default intake, the `service-request` process) and its accept and
+ *  resolve SLAs. Edits bump `version` and append to `history`; an edit that
+ *  waits for an approval card sits in `pending` until it is decided. */
+export const orgServices = pgTable('org_services', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  /** The providing department; null = the company (the chief answers). */
+  unitId: text('unitId'),
+  /** The slug a requester names, unique in the org. */
+  name: text('name').notNull(),
+  title: text('title').notNull(),
+  description: text('description').notNull().default(''),
+  /** JSON ServiceField[] (service-model.ts): what a requester must give. */
+  fields: text('fields').notNull().default('[]'),
+  /** Who answers: head | a title matched in the unit. */
+  ownerRole: text('ownerRole').notNull().default('head'),
+  /** The linked process (its runs pin their version); null = the default intake. */
+  processId: text('processId'),
+  acceptSlaHours: real('acceptSlaHours').notNull(),
+  resolveSlaHours: real('resolveSlaHours').notNull(),
+  /** draft (waits for approval) | active | retired. */
+  status: text('status').notNull().default('active'),
+  version: integer('version').notNull().default(1),
+  /** JSON Array<{ version, by, reason, diff[], at }>. */
+  history: text('history').notNull().default('[]'),
+  /** JSON { patch, reason, by, approvalId } of an edit waiting for its card ('' = none). */
+  pending: text('pending').notNull().default(''),
+  templateId: text('templateId').notNull().default(''),
+  /** bootstrap | template | authored. */
+  source: text('source').notNull().default('authored'),
+  createdBy: text('createdBy').notNull().default(''),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt').notNull(),
+}, (t) => [uniqueIndex('idx_org_services_name').on(t.orgId, t.name)]);
+
+/** One request for a service (SR-n), or an unlisted ask (serviceId null)
+ *  routed to a department or triaged by the chief. The SLA timers, the
+ *  provider's answer (accept with a date, decline with a reason, a
+ *  counter-proposal), every exchange in `thread`, the process run it
+ *  started and the breach card that climbs the provider's line. */
+export const orgServiceRequests = pgTable('org_service_requests', {
+  ...accountScoped(),
+  id: text('id').primaryKey(),
+  orgId: text('orgId').notNull(),
+  key: text('key').notNull(),
+  serviceId: text('serviceId'),
+  serviceVersion: integer('serviceVersion'),
+  title: text('title').notNull(),
+  /** JSON Record<string, string>: the fields as given. */
+  fields: text('fields').notNull().default('{}'),
+  why: text('why').notNull().default(''),
+  neededBy: text('neededBy'),
+  /** What it serves: goal | project | key_result, its id and label. */
+  servesKind: text('servesKind').notNull().default(''),
+  servesId: text('servesId'),
+  servesLabel: text('servesLabel').notNull().default(''),
+  /** agent:<id> | user | human:<id>; the agent when one asked. */
+  requester: text('requester').notNull(),
+  requesterAgentId: text('requesterAgentId'),
+  requesterUnitId: text('requesterUnitId'),
+  providerUnitId: text('providerUnitId'),
+  /** triage | open | negotiating | accepted | declined | delivered | cancelled | failed. */
+  status: text('status').notNull().default('open'),
+  runId: text('runId'),
+  acceptTaskId: text('acceptTaskId'),
+  acceptSlaHours: real('acceptSlaHours').notNull().default(0),
+  resolveSlaHours: real('resolveSlaHours').notNull().default(0),
+  acceptDueAt: text('acceptDueAt'),
+  resolveDueAt: text('resolveDueAt'),
+  /** The provider's committed date and the open counter-proposal (JSON { due?, scope?, note, by, at }). */
+  committedDue: text('committedDue'),
+  counter: text('counter').notNull().default(''),
+  declineReason: text('declineReason').notNull().default(''),
+  /** JSON Array<{ at, by, action, due?, reason?, scope?, note? }>. */
+  thread: text('thread').notNull().default('[]'),
+  answeredAt: text('answeredAt'),
+  acceptedAt: text('acceptedAt'),
+  resolvedAt: text('resolvedAt'),
+  acceptBreachedAt: text('acceptBreachedAt'),
+  resolveBreachedAt: text('resolveBreachedAt'),
+  /** How many times the accept SLA was breached; the open breach card. */
+  breaches: integer('breaches').notNull().default(0),
+  breachApprovalId: text('breachApprovalId'),
+  /** An unlisted ask's words (repeat counting) and when the repeat was flagged to the provider. */
+  needKey: text('needKey').notNull().default(''),
+  suggestedAt: text('suggestedAt'),
+  createdAt: text('createdAt').notNull(),
+  updatedAt: text('updatedAt').notNull(),
+}, (t) => [uniqueIndex('idx_org_service_requests_key').on(t.orgId, t.key)]);

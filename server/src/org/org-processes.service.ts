@@ -470,6 +470,8 @@ export class OrgProcessesService {
     const active = (id: string | null | undefined) => (id && members.some((m) => m.agentId === id) ? id : null);
     if (l === 'owner') return active(run.ownerAgentId) ?? org.chiefOfStaffAgentId;
     if (l === 'chief') return org.chiefOfStaffAgentId;
+    // A service request names its providing department and answering role in the run's variables (docs/services.md).
+    if (l === 'provider' || (l === 'head' && this.providerUnitVar(run))) { const a = await this.providerAgent(org, run, members); if (a) return a; }
     if (l === 'head') {
       if (p.unitId && this.units) { const u = await this.units.get(org.id, p.unitId).catch(() => null); if (active(u?.leadAgentId)) return u!.leadAgentId; }
       return active(run.ownerAgentId) ?? org.chiefOfStaffAgentId;
@@ -481,6 +483,30 @@ export class OrgProcessesService {
       for (const m of byTitle) { const u = await this.units.unitForAssignee(org.id, m.agentId).catch(() => null); if (u && subtree.has(u.id)) return m.agentId; }
     }
     return byTitle[0]?.agentId ?? active(run.ownerAgentId) ?? org.chiefOfStaffAgentId;
+  }
+
+  /** The provider department a service request's run names (`provider_unit`, or the triage output `provider`). */
+  private providerUnitVar(run: OrgProcessRun): string {
+    const v = parse<Record<string, string>>(run.vars, {});
+    return (v.provider_unit || v.provider || '').trim();
+  }
+
+  /** The member answering for the provider department: its `provider_role`
+   *  title within the unit, else the unit's head. Model-free. */
+  private async providerAgent(org: Organization, run: OrgProcessRun, members: Array<{ agentId: string; title: string | null }>): Promise<string | null> {
+    const ref = this.providerUnitVar(run).replace(/^#/, '').toLowerCase();
+    if (!ref || !this.units) return null;
+    const unit = (await this.units.units(org.id)).find((u) => u.id === ref || u.slug === ref || u.name.toLowerCase() === ref);
+    if (!unit) return null;
+    const role = (parse<Record<string, string>>(run.vars, {}).provider_role ?? '').trim().toLowerCase();
+    if (role && role !== 'head') {
+      const subtree = new Set(await this.units.subtree(org.id, unit.id).catch(() => [unit.id]));
+      for (const m of members.filter((x) => (x.title ?? '').toLowerCase().includes(role))) {
+        const u = await this.units.unitForAssignee(org.id, m.agentId).catch(() => null);
+        if (u && subtree.has(u.id)) return m.agentId;
+      }
+    }
+    return members.some((m) => m.agentId === unit.leadAgentId) ? unit.leadAgentId : null;
   }
 
   /**
@@ -497,7 +523,8 @@ export class OrgProcessesService {
     if (dup) return dup;
     const open = (await this.runs(orgId, { processId: p.id })).filter((r) => OPEN_RUN.includes(r.status)).length;
     const cap = processTunable(org, 'process.maxActiveRuns');
-    if (open >= cap) {
+    // A service request is admitted by its service (docs/services.md): the requests are the queue, not the run cap.
+    if (open >= cap && input.trigger?.kind !== 'service_request') {
       await this.log(orgId, p.id, '', '', 'start_skipped', input.initiator, { reason: `max active runs (${cap})`, triggerRef });
       throw new BadRequestException(`refused: ${p.title} already has ${open} open run(s), the company's limit (process.maxActiveRuns ${cap}) — finish or cancel one first`);
     }
@@ -867,11 +894,13 @@ export class OrgProcessesService {
   }
 
   /** A service request (docs/processes.md "Services"): the hook a service catalog will call. */
-  async startServiceRequest(orgId: string, service: string, input: { title?: string; vars?: Record<string, unknown>; requestedBy: string; ref?: string }): Promise<OrgProcessRun> {
-    for (const p of await this.list(orgId)) {
+  async startServiceRequest(orgId: string, service: string, input: { title?: string; vars?: Record<string, unknown>; requestedBy: string; ref?: string; process?: string; projectId?: string | null }): Promise<OrgProcessRun> {
+    // The service catalog names the process it links (docs/services.md); it must take requests.
+    const named = input.process ? [await this.get(orgId, input.process)] : null;
+    for (const p of named ?? await this.list(orgId)) {
       const def = await this.activeDef(orgId, p).catch(() => null);
       const t = def?.triggers.find((x) => x.kind === 'service_request' && x.enabled !== false && (!x.service || x.service === service || p.name === service));
-      if (t) return this.start(orgId, p.id, { initiator: input.requestedBy, trigger: { kind: 'service_request', ref: input.ref ?? service }, triggerRef: input.ref ? `service:${input.ref}` : undefined, title: input.title, vars: input.vars });
+      if (t) return this.start(orgId, p.id, { initiator: input.requestedBy, trigger: { kind: 'service_request', ref: input.ref ?? service }, triggerRef: input.ref ? `service:${input.ref}` : undefined, title: input.title, vars: input.vars, projectId: input.projectId ?? null });
     }
     throw new BadRequestException(`no process takes requests for "${service}"`);
   }

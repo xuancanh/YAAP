@@ -146,7 +146,11 @@
     "process.metricsWindowRuns": 10,
     "process.maxActiveRuns": 3,
     "process.slaAction": 0,
-    "process.defaultSlaHours": 24
+    "process.defaultSlaHours": 24,
+    "service.acceptSlaHours": 4,
+    "service.breachAction": 0,
+    "service.repeatWindowDays": 14,
+    "service.metricsWindowDays": 14
   },
   "playbooks": [],
   "budget": {

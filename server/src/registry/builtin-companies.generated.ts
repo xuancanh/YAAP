@@ -309,7 +309,13 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "process.maxActiveRuns": 3,
     "process.defaultSlaHours": 8,
     "process.loopMaxCeiling": 6,
-    "process.reviewCadenceDays": 7
+    "process.reviewCadenceDays": 7,
+    "service.acceptSlaHours": 4,
+    "service.resolveSlaHours": 48,
+    "service.suggestAfterRepeats": 4,
+    "service.repeatWindowDays": 14,
+    "service.editApproval": 0,
+    "service.metricsWindowDays": 14
    },
    "playbooks": [],
    "budget": {
@@ -601,7 +607,10 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "alignment.tolerance.textShare": 0.35,
     "process.metricsWindowRuns": 40,
     "process.defaultSlaHours": 24,
-    "process.loopMaxCeiling": 3
+    "process.loopMaxCeiling": 3,
+    "service.resolveSlaHours": 120,
+    "service.suggestAfterRepeats": 2,
+    "service.metricsWindowDays": 60
    },
    "playbooks": [],
    "budget": {
@@ -937,7 +946,12 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "process.metricsWindowRuns": 10,
     "process.maxActiveRuns": 3,
     "process.defaultSlaHours": 8,
-    "process.reviewCadenceDays": 7
+    "process.reviewCadenceDays": 7,
+    "service.acceptSlaHours": 4,
+    "service.resolveSlaHours": 48,
+    "service.repeatWindowDays": 14,
+    "service.editApproval": 0,
+    "service.metricsWindowDays": 14
    },
    "playbooks": [],
    "budget": {
@@ -1229,7 +1243,13 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "process.maxActiveRuns": 3,
     "process.defaultSlaHours": 8,
     "process.loopMaxCeiling": 3,
-    "process.reviewCadenceDays": 7
+    "process.reviewCadenceDays": 7,
+    "service.acceptSlaHours": 4,
+    "service.resolveSlaHours": 48,
+    "service.suggestAfterRepeats": 2,
+    "service.repeatWindowDays": 14,
+    "service.editApproval": 0,
+    "service.metricsWindowDays": 60
    },
    "playbooks": [],
    "budget": {
@@ -1454,7 +1474,13 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "process.metricsWindowRuns": 40,
     "process.maxActiveRuns": 3,
     "process.defaultSlaHours": 24,
-    "process.loopMaxCeiling": 3
+    "process.loopMaxCeiling": 3,
+    "service.acceptSlaHours": 4,
+    "service.resolveSlaHours": 120,
+    "service.suggestAfterRepeats": 2,
+    "service.repeatWindowDays": 14,
+    "service.editApproval": 0,
+    "service.metricsWindowDays": 60
    },
    "playbooks": [],
    "budget": {
@@ -1629,7 +1655,11 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "process.metricsWindowRuns": 10,
     "process.maxActiveRuns": 3,
     "process.slaAction": 0,
-    "process.defaultSlaHours": 24
+    "process.defaultSlaHours": 24,
+    "service.acceptSlaHours": 4,
+    "service.breachAction": 0,
+    "service.repeatWindowDays": 14,
+    "service.metricsWindowDays": 14
    },
    "playbooks": [],
    "budget": {
@@ -1947,7 +1977,12 @@ export const BUILTIN_COMPANIES: ReadonlyArray<{ slug: string; manifest: Record<s
     "process.defaultSlaHours": 48,
     "process.loopMaxCeiling": 3,
     "process.adHocSteps": 0,
-    "process.reviewCadenceDays": 30
+    "process.reviewCadenceDays": 30,
+    "service.acceptSlaHours": 24,
+    "service.resolveSlaHours": 120,
+    "service.suggestAfterRepeats": 2,
+    "service.editApproval": 2,
+    "service.metricsWindowDays": 60
    },
    "playbooks": [],
    "budget": {

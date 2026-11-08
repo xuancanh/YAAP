@@ -166,6 +166,8 @@ export const AUTHORITY_TABLE: AuthorityRow[] = [
   { kind: 'process_gate', manager: 'decide', when: 'an approval step of a process run its reporting line performs (docs/processes.md); any mode' },
   { kind: 'process_deviation', manager: 'decide', when: 'waiving a MUST item for a step its reporting line performs; any mode' },
   { kind: 'process_change', manager: 'decide', when: 'a change to a process owned in its reporting line (process.editApproval); any mode' },
+  { kind: 'service_breach', manager: 'decide', when: 'a service request its reporting line has not answered within the accept SLA (docs/services.md): hold the provider to an answer, or decline it; any mode' },
+  { kind: 'service_change', manager: 'decide', when: 'a change to a service of a department in its reporting line (service.editApproval); any mode' },
   { kind: 'human_review', manager: 'recommend', when: 'addressed to a named person' },
   { kind: 'tune', manager: 'recommend', when: 'company-wide setting: CEO' },
   { kind: 'routing', manager: 'recommend', when: 'company-wide setting: CEO' },
