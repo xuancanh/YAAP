@@ -1,30 +1,33 @@
 /**
- * A task's own plan on screen (docs/task-execution.md "On screen"): the
- * mode, version, sessions and cost against the caps; every step with its
- * status, dependencies, tier, attempts, cost, the session that ran it, its
- * output and its exit criteria with evidence; the decision log; the handoff
- * packets; and the session tree (master → workers, lead → continuations)
- * whose worker transcripts stay collapsed until opened — like tool calls and
- * thinking elsewhere. Renders nothing when there is no plan. Shown in the
- * task drawer, under a run in the Work log and above a chat that has one.
+ * A task's own plan on screen (docs/task-execution.md "On screen"). The
+ * header is the glance: mode, status, steps done, cost against the cap. The
+ * body is a compact step list grouped into stages (a step's stage is one past
+ * its latest dependency, so steps of a stage run side by side) — status,
+ * dependencies, tier, attempts, cost — each opening to its goal, exit criteria
+ * with evidence, output and notes. The session tree (master → workers, lead →
+ * continuations, worker transcripts folded until opened), the decision log,
+ * the handoff packets and the versions sit behind tabs. Renders nothing when
+ * there is no plan. Shown in the task drawer, under a run in the Work log and
+ * above a chat that has one.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { api, type ChatMessage, type TaskPlanHandoffView, type TaskPlanStepView, type TaskPlanView } from '../lib/api';
 import { Markdown } from '../lib/md';
 import { fmtTokens } from '../lib/util';
-import { EXEC_MODE_HINT, EXEC_MODE_WORD, ROLE_WORD, planIsLive, planStepTone, planSummary, planTone, sessionTone, sessionTree, usd, type SessionNode } from '../lib/task-plans';
-import { Pill } from './CompanyKit';
+import { EXEC_MODE_HINT, EXEC_MODE_WORD, ROLE_WORD, attemptWord, planIsLive, planSummary, planTone, sessionTone, sessionTree, stepStages, stepStatusWord, usd, type SessionNode } from '../lib/task-plans';
+import { Bar, Pill } from './CompanyKit';
+import { TierBadge } from './ModelKit';
+import '../styles/models.css';
 
 export type TaskPlanSource = { kind: 'task'; wsId: string; taskId: string } | { kind: 'session'; sessionId: string };
+type Tab = 'steps' | 'sessions' | 'decisions' | 'handoffs' | 'history';
 
 const POLL_MS = 3_000;
-const faint: React.CSSProperties = { fontSize: 11, color: 'var(--text-faint)' };
-const box: React.CSSProperties = { background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 12, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 8 };
-const pre: React.CSSProperties = { margin: 0, whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', fontFamily: 'var(--mono)', fontSize: 11.5, lineHeight: 1.5, background: 'var(--code)', border: '1px solid var(--border-soft)', borderRadius: 8, padding: '7px 9px', maxHeight: 280, overflowY: 'auto' };
-const summary: React.CSSProperties = { cursor: 'pointer', fontSize: 12, display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' };
+const when = (iso: string) => (iso ? iso.slice(0, 16).replace('T', ' ') : '');
 
 export function TaskPlanPanel({ source, collapsed = false }: { source: TaskPlanSource; collapsed?: boolean }) {
   const [view, setView] = useState<TaskPlanView | null>(null);
+  const [tab, setTab] = useState<Tab>('steps');
   const key = source.kind === 'task' ? `${source.wsId}:${source.taskId}` : source.sessionId;
   const load = useCallback(async () => {
     let v: TaskPlanView | { plan: null } | null;
@@ -41,78 +44,153 @@ export function TaskPlanPanel({ source, collapsed = false }: { source: TaskPlanS
   }, [live, load]);
   if (!view) return null;
   const p = view.plan;
+  const required = view.steps.filter((s) => !s.optional);
+  const done = required.filter((s) => s.status === 'done' || s.status === 'skipped').length;
+  const failed = view.steps.filter((s) => s.status === 'failed').length;
+  const tabs: Array<{ id: Tab; label: string; n?: number }> = [
+    { id: 'steps', label: 'Steps', n: view.steps.length },
+    { id: 'sessions', label: 'Sessions', n: view.sessions.length },
+    ...(view.decisions.length ? [{ id: 'decisions' as const, label: 'Decisions', n: view.decisions.length }] : []),
+    ...(view.handoffs.length ? [{ id: 'handoffs' as const, label: 'Handoffs', n: view.handoffs.length }] : []),
+    ...(view.versions.length > 1 ? [{ id: 'history' as const, label: 'History', n: view.versions.length }] : []),
+  ];
+  const shown = tabs.some((t) => t.id === tab) ? tab : 'steps';
   return (
-    <details data-testid="task-plan" open={!collapsed} style={box}>
-      <summary style={{ ...summary, fontSize: 12.5 }}>
-        <b>Plan</b>
-        <span title={EXEC_MODE_HINT[p.mode]}>{EXEC_MODE_WORD[p.mode] ?? p.mode}{p.dynamic ? ' · dynamic' : ''}</span>
-        <span style={faint}>v{p.version}</span>
+    <details data-testid="task-plan" open={!collapsed} className="tp">
+      <summary className="tp-head">
+        <svg className="tp-chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" aria-hidden><path d="M9 6l6 6-6 6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+        <b className="tp-title">Plan</b>
+        <span className="tp-mode" title={EXEC_MODE_HINT[p.mode]}>{EXEC_MODE_WORD[p.mode] ?? p.mode}</span>
         <Pill tone={planTone(p.status)}>{p.status}</Pill>
-        <span style={{ ...faint, marginLeft: 'auto' }} data-testid="task-plan-summary">{planSummary(view)} · {fmtTokens(p.tokensIn + p.tokensOut)} tok</span>
+        {failed > 0 && <Pill tone="bad" plain>{failed} failed</Pill>}
+        <span className="tp-progress" aria-hidden><Bar value={required.length ? done / required.length : 0} tone={p.status === 'done' ? 'ok' : undefined} label="Steps done" /></span>
+        <span className="tp-sum co-num" data-testid="task-plan-summary">{planSummary(view)}</span>
       </summary>
-      <div style={faint}>
-        {EXEC_MODE_HINT[p.mode]} Caps: {p.caps.maxSessions} sessions, {p.caps.maxParallel} at once{p.caps.planUsdCap > 0 ? `, ${usd(p.caps.planUsdCap)}` : ''}.{p.note ? ` ${p.note}.` : ''}
+      <div className="tp-body">
+        <div className="tp-meta">
+          <span>{EXEC_MODE_HINT[p.mode]}{p.dynamic ? ' The plan may change as it goes.' : ''}</span>
+          <span className="tp-caps co-num" data-testid="task-plan-caps">
+            <span title="Sessions used of the cap">{p.sessions} of {p.caps.maxSessions} sessions</span>
+            <span>up to {p.caps.maxParallel} at once</span>
+            {p.caps.planUsdCap > 0
+              ? <span className="tp-cost" title="Cost against the plan's cap">{usd(p.usd)} of {usd(p.caps.planUsdCap)}<Bar value={p.usd / p.caps.planUsdCap} tone={p.usd / p.caps.planUsdCap > 0.85 ? 'warn' : undefined} label="Plan cost against its cap" width={54} /></span>
+              : <span>{usd(p.usd)}</span>}
+            <span>{fmtTokens(p.tokensIn + p.tokensOut)} tokens</span>
+            <span>v{p.version}</span>
+          </span>
+          {p.note && <span className="co-faint">{p.note}</span>}
+        </div>
+        <div className="co-seg tp-tabs" role="tablist" aria-label="Plan details">
+          {tabs.map((t) => (
+            <button key={t.id} type="button" role="tab" aria-selected={shown === t.id} onClick={() => setTab(t.id)} data-testid={`task-plan-tab-${t.id}`}>
+              {t.label}{t.n !== undefined && <span className="tp-n">{t.n}</span>}
+            </button>
+          ))}
+        </div>
+        {shown === 'steps' && <Steps steps={view.steps} />}
+        {shown === 'sessions' && (
+          <ul className="tp-sessions" data-testid="task-plan-sessions">
+            {sessionTree(view.sessions).map((n) => <SessionRow key={n.s.sessionId} n={n} steps={view.steps} />)}
+          </ul>
+        )}
+        {shown === 'decisions' && (
+          <ul className="tp-list" data-testid="task-plan-decisions">
+            {view.decisions.map((d, i) => (
+              <li key={i}>
+                <span>{d.text}</span>
+                <span className="co-faint">{[d.proposed ? 'proposed by a parallel step' : 'every session honours it', d.stepId ? `step ${d.stepId}` : ''].filter(Boolean).join(' · ')}</span>
+              </li>
+            ))}
+          </ul>
+        )}
+        {shown === 'handoffs' && (
+          <div className="tp-handoffs" data-testid="task-plan-handoffs">{view.handoffs.map((h, i) => <Handoff key={i} h={h} />)}</div>
+        )}
+        {shown === 'history' && (
+          <ul className="tp-list" data-testid="task-plan-versions">
+            {view.versions.map((v) => <li key={v.version}><span><b>v{v.version}</b> {v.reason}</span><span className="co-faint">{v.diff.join('; ')}</span></li>)}
+          </ul>
+        )}
       </div>
-      <ol style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-        {view.steps.map((s) => <StepRow key={s.id} s={s} />)}
-      </ol>
-      {view.decisions.length > 0 && (
-        <details data-testid="task-plan-decisions">
-          <summary style={summary}><span style={{ fontWeight: 600 }}>Decisions</span><span style={faint}>{view.decisions.length} · every session honours them</span></summary>
-          <ul style={{ margin: '5px 0 0', paddingLeft: 18, fontSize: 12 }}>
-            {view.decisions.map((d, i) => <li key={i}>{d.text}{d.proposed && <span style={faint}> · proposed by a parallel step</span>}{d.stepId && <span style={faint}> · {d.stepId}</span>}</li>)}
-          </ul>
-        </details>
-      )}
-      {view.handoffs.length > 0 && (
-        <details data-testid="task-plan-handoffs">
-          <summary style={summary}><span style={{ fontWeight: 600 }}>Handoffs</span><span style={faint}>{view.handoffs.length}</span></summary>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 5 }}>{view.handoffs.map((h, i) => <Handoff key={i} h={h} />)}</div>
-        </details>
-      )}
-      <details data-testid="task-plan-sessions">
-        <summary style={summary}><span style={{ fontWeight: 600 }}>Sessions</span><span style={faint}>{view.sessions.length}</span></summary>
-        <ul style={{ listStyle: 'none', margin: '5px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
-          {sessionTree(view.sessions).map((n) => <SessionRow key={n.s.sessionId} n={n} steps={view.steps} />)}
-        </ul>
-      </details>
-      {view.versions.length > 1 && (
-        <details>
-          <summary style={summary}><span style={{ fontWeight: 600 }}>Versions</span><span style={faint}>{view.versions.length}</span></summary>
-          <ul style={{ margin: '5px 0 0', paddingLeft: 18, fontSize: 12 }}>
-            {view.versions.map((v) => <li key={v.version}>v{v.version}: {v.reason} <span style={faint}>— {v.diff.join('; ')}</span></li>)}
-          </ul>
-        </details>
-      )}
     </details>
   );
 }
 
-function StepRow({ s }: { s: TaskPlanStepView }) {
-  const meta = [s.dependsOn.length ? `after ${s.dependsOn.join(', ')}` : '', s.parallel ? 'parallel-safe' : '', s.tier ?? '', s.attempts > 1 ? `attempt ${s.attempts}` : '', s.optional ? 'optional' : ''].filter(Boolean).join(' · ');
+/** The steps grouped by stage: a stage with more than one step runs side by side. */
+function Steps({ steps }: { steps: TaskPlanStepView[] }) {
+  const stages = stepStages(steps);
+  const groups: TaskPlanStepView[][] = [];
+  for (const s of steps) (groups[stages.get(s.id) ?? 0] ??= []).push(s);
+  const multi = groups.filter(Boolean).length > 1;
   return (
-    <li data-testid="task-plan-step" data-step={s.id} data-status={s.status}>
+    <ol className="tp-stages">
+      {groups.filter(Boolean).map((g, i) => (
+        <li key={i} className="tp-stage">
+          {multi && <div className="tp-stage-label">Stage {i + 1}{g.length > 1 && g.every((s) => s.parallel) ? ' · side by side' : ''}</div>}
+          <ol className="tp-steps">{g.map((s) => <StepRow key={s.id} s={s} />)}</ol>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+function StepIcon({ s }: { s: TaskPlanStepView }) {
+  const k = s.status === 'pending' && s.ready ? 'ready' : s.status;
+  const glyph = k === 'done' ? <path d="M7 12.5l3.2 3.2L17 9" /> : k === 'failed' ? <path d="M8.5 8.5l7 7M15.5 8.5l-7 7" /> : k === 'interrupted' ? <path d="M12 7.5v5.5M12 16.5v.01" /> : k === 'skipped' ? <path d="M8 12h8" /> : null;
+  return (
+    <span className={`tp-icon s-${k}`} aria-hidden>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+        <circle cx="12" cy="12" r="9.5" strokeWidth="1.8" />{glyph}
+        {k === 'running' && <circle cx="12" cy="12" r="4" fill="currentColor" stroke="none" />}
+      </svg>
+    </span>
+  );
+}
+
+function StepRow({ s }: { s: TaskPlanStepView }) {
+  const word = stepStatusWord(s);
+  const met = s.criteria.filter((c) => c.met).length;
+  return (
+    <li data-testid="task-plan-step" data-step={s.id} data-status={s.status} className={`tp-step s-${s.status}`}>
       <details>
-        <summary style={summary}>
-          <Pill tone={planStepTone(s.status)}>{s.status}</Pill>
-          <span style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>{s.id}</span>
-          <span style={{ fontSize: 12.5 }}>{s.title}</span>
-          {meta && <span style={faint}>{meta}</span>}
-          <span style={{ ...faint, marginLeft: 'auto' }}>{s.tokensIn + s.tokensOut > 0 ? `${fmtTokens(s.tokensIn + s.tokensOut)} tok · ${usd(s.usd)}` : s.ready ? 'ready' : ''}</span>
+        <summary>
+          <StepIcon s={s} />
+          <span className="co-sr">{word}</span>
+          <span className="tp-step-main">
+            <span className="tp-step-title"><span className="co-key">{s.id}</span>{s.title}{s.optional && <span className="co-faint"> · optional</span>}</span>
+            <span className="tp-step-meta" data-testid="task-plan-step-meta">
+              <span className={`tp-word s-${s.status === 'pending' && s.ready ? 'ready' : s.status}`}>{word}</span>
+              {s.dependsOn.length > 0 && <span>after {s.dependsOn.join(', ')}</span>}
+              {attemptWord(s.attempts) && <span className="tp-warn">{attemptWord(s.attempts)}</span>}
+              {s.exit.length > 0 && s.criteria.length > 0 && <span>{met}/{s.exit.length} criteria met</span>}
+            </span>
+          </span>
+          {s.tier && <TierBadge tier={s.tier} />}
+          <span className="tp-step-cost co-num">{s.tokensIn + s.tokensOut > 0 ? usd(s.usd) : ''}</span>
         </summary>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 5, margin: '6px 0 2px 4px', fontSize: 12 }}>
-          <div>{s.goal}</div>
-          {s.inputs.length > 0 && <div style={faint}>Needs: {s.inputs.join('; ')}</div>}
-          <div>
-            <div style={faint}>Exit criteria</div>
-            <ul style={{ margin: '2px 0 0', paddingLeft: 18 }}>
-              {s.exit.map((c, i) => { const r = s.criteria[i]; return <li key={i}>{r ? (r.met ? '✓ ' : '✗ ') : ''}{c}{r?.evidence && <span style={faint}> — {r.evidence}</span>}</li>; })}
-            </ul>
-          </div>
-          {s.output && <><div style={faint}>Output{s.model ? ` · ${s.model}` : ''}</div><div style={{ fontSize: 12.5, lineHeight: 1.55 }}><Markdown text={s.output} compact /></div></>}
-          {s.questions.length > 0 && <div style={faint}>Open questions: {s.questions.join('; ')}</div>}
-          {s.artifacts.length > 0 && <div style={faint}>Artifacts: {s.artifacts.join(', ')}</div>}
-          {s.note && <div style={faint}>Master's note: {s.note}</div>}
+        <div className="tp-step-detail">
+          <p className="tp-goal">{s.goal}</p>
+          <dl className="co-dl tp-dl">
+            {s.inputs.length > 0 && <><dt>Needs</dt><dd>{s.inputs.join('; ')}</dd></>}
+            {s.exit.length > 0 && (
+              <>
+                <dt>Done when</dt>
+                <dd>
+                  <ul className="tp-criteria">
+                    {s.exit.map((c, i) => {
+                      const r = s.criteria[i];
+                      return <li key={i} className={r ? (r.met ? 'met' : 'unmet') : ''}><span aria-label={r ? (r.met ? 'met' : 'not met') : 'not checked yet'}>{r ? (r.met ? '✓' : '✗') : '○'}</span>{c}{r?.evidence && <span className="co-faint"> — {r.evidence}</span>}</li>;
+                    })}
+                  </ul>
+                </dd>
+              </>
+            )}
+            {(s.model || s.tokensIn + s.tokensOut > 0) && <><dt>Ran on</dt><dd className="co-num">{[s.model, s.tokensIn + s.tokensOut > 0 ? `${fmtTokens(s.tokensIn + s.tokensOut)} tokens · ${usd(s.usd)}` : '', s.parallel ? 'parallel-safe' : ''].filter(Boolean).join(' · ')}</dd></>}
+            {s.note && <><dt>Master&apos;s note</dt><dd>{s.note}</dd></>}
+            {s.questions.length > 0 && <><dt>Open questions</dt><dd>{s.questions.join('; ')}</dd></>}
+            {s.artifacts.length > 0 && <><dt>Artifacts</dt><dd>{s.artifacts.join(', ')}</dd></>}
+          </dl>
+          {s.output && <div className="tp-output"><div className="co-faint">Output</div><Markdown text={s.output} compact /></div>}
         </div>
       </details>
     </li>
@@ -121,13 +199,15 @@ function StepRow({ s }: { s: TaskPlanStepView }) {
 
 function Handoff({ h }: { h: TaskPlanHandoffView }) {
   return (
-    <div style={{ borderLeft: '2px solid var(--accent-dim)', paddingLeft: 9, fontSize: 12, display: 'flex', flexDirection: 'column', gap: 2 }}>
-      <div style={faint}>{h.stepId ? `step ${h.stepId} · ` : ''}{h.createdAt.slice(0, 16).replace('T', ' ')}</div>
-      <div><b>State:</b> {h.state}</div>
-      {h.decisions.length > 0 && <div><b>Decisions:</b> {h.decisions.join('; ')}</div>}
-      {h.artifacts.length > 0 && <div><b>Artifacts:</b> {h.artifacts.join(', ')}</div>}
-      {h.questions.length > 0 && <div><b>Open:</b> {h.questions.join('; ')}</div>}
-      <div><b>Next:</b> {h.next}</div>
+    <div className="tp-handoff">
+      <div className="co-faint">{h.stepId ? `Step ${h.stepId} · ` : ''}{when(h.createdAt)}</div>
+      <dl className="co-dl tp-dl">
+        <dt>State</dt><dd>{h.state}</dd>
+        {h.decisions.length > 0 && <><dt>Decisions</dt><dd>{h.decisions.join('; ')}</dd></>}
+        {h.artifacts.length > 0 && <><dt>Artifacts</dt><dd>{h.artifacts.join(', ')}</dd></>}
+        {h.questions.length > 0 && <><dt>Open</dt><dd>{h.questions.join('; ')}</dd></>}
+        <dt>Next</dt><dd>{h.next}</dd>
+      </dl>
     </div>
   );
 }
@@ -136,12 +216,12 @@ function SessionRow({ n, steps }: { n: SessionNode; steps: TaskPlanStepView[] })
   const s = n.s;
   const step = s.stepId ? steps.find((x) => x.id === s.stepId) : undefined;
   return (
-    <li data-testid="task-plan-session" data-role={s.role} style={{ marginLeft: s.depth > 0 ? 14 : 0 }}>
+    <li data-testid="task-plan-session" data-role={s.role} className={s.depth > 0 ? 'tp-child' : ''}>
       {s.role === 'worker' ? (
-        <WorkerTranscript sessionId={s.sessionId} head={<SessionHead n={n} step={step?.title} />} />
-      ) : <div style={summary}><SessionHead n={n} /></div>}
+        <WorkerTranscript sessionId={s.sessionId} head={<SessionHead n={n} step={step?.title} foldable />} />
+      ) : <div className="tp-session-head"><SessionHead n={n} /></div>}
       {n.children.length > 0 && (
-        <ul style={{ listStyle: 'none', margin: '4px 0 0', padding: 0, display: 'flex', flexDirection: 'column', gap: 4 }}>
+        <ul className="tp-sessions nested">
           {n.children.map((c) => <SessionRow key={c.s.sessionId} n={c} steps={steps} />)}
         </ul>
       )}
@@ -149,16 +229,17 @@ function SessionRow({ n, steps }: { n: SessionNode; steps: TaskPlanStepView[] })
   );
 }
 
-function SessionHead({ n, step }: { n: SessionNode; step?: string }) {
+function SessionHead({ n, step, foldable }: { n: SessionNode; step?: string; foldable?: boolean }) {
   const s = n.s;
   return (
     <>
-      <span style={{ fontWeight: 600 }}>{ROLE_WORD[s.role] ?? s.role}</span>
-      {s.stepId && <span style={{ fontFamily: 'var(--mono)', fontSize: 11 }}>{s.stepId}</span>}
-      {step && <span>{step}</span>}
+      <b>{ROLE_WORD[s.role] ?? s.role}</b>
+      {s.stepId && <span className="co-key">{s.stepId}</span>}
+      {step && <span className="tp-session-step">{step}</span>}
       <Pill tone={sessionTone(s.status)} plain>{s.status.replace('_', ' ')}</Pill>
-      {s.error && <span style={{ ...faint, color: 'var(--red)' }}>{s.error.slice(0, 120)}</span>}
-      <span style={{ ...faint, marginLeft: 'auto' }}>{s.model ? `${s.model} · ` : ''}{fmtTokens(s.tokensIn + s.tokensOut)} tok · {usd(s.usd)}</span>
+      <span className="tp-session-end co-num">{s.model ? `${s.model} · ` : ''}{fmtTokens(s.tokensIn + s.tokensOut)} tok · {usd(s.usd)}</span>
+      {foldable && <span className="co-faint tp-open">transcript</span>}
+      {s.error && <span className="tp-error">{s.error.slice(0, 160)}</span>}
     </>
   );
 }
@@ -172,18 +253,18 @@ function WorkerTranscript({ sessionId, head }: { sessionId: string; head: React.
     void api.transcript(sessionId).then((t) => setMsgs(t.messages)).catch(() => setMsgs('error'));
   };
   return (
-    <details data-testid="worker-transcript" onToggle={onToggle}>
-      <summary style={summary}>{head}</summary>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 6, margin: '6px 0 2px 6px', paddingLeft: 9, borderLeft: '1px solid var(--border-soft)' }}>
-        {msgs === null ? <div style={faint}>Loading the transcript…</div>
-          : msgs === 'error' ? <div style={{ ...faint, color: 'var(--red)' }}>Could not load this session.</div>
-            : msgs.length === 0 ? <div style={faint}>Nothing yet.</div>
+    <details data-testid="worker-transcript" className="tp-worker" onToggle={onToggle}>
+      <summary className="tp-session-head">{head}</summary>
+      <div className="tp-transcript">
+        {msgs === null ? <div className="co-faint">Loading the transcript…</div>
+          : msgs === 'error' ? <div className="tp-error">Could not load this session.</div>
+            : msgs.length === 0 ? <div className="co-faint">Nothing yet.</div>
               : msgs.map((m) => m.role === 'tool' || m.role === 'thinking' || m.role === 'user' ? (
-                <details key={m.id}>
-                  <summary style={{ ...summary, ...faint, fontWeight: 600 }}>{m.role === 'tool' ? <span style={{ fontFamily: 'var(--mono)' }}>{m.toolName ?? 'tool'}</span> : m.role === 'thinking' ? 'Thinking' : 'Prompt'}</summary>
-                  <pre style={{ ...pre, marginTop: 4 }}>{m.content}</pre>
+                <details key={m.id} className="tp-fold">
+                  <summary>{m.role === 'tool' ? <span className="tp-tool">{m.toolName ?? 'tool'}</span> : m.role === 'thinking' ? 'Thinking' : 'Prompt'}</summary>
+                  <pre>{m.content}</pre>
                 </details>
-              ) : <div key={m.id} style={{ fontSize: 12.5, lineHeight: 1.55 }}><Markdown text={m.content} compact /></div>)}
+              ) : <div key={m.id} className="tp-msg"><Markdown text={m.content} compact /></div>)}
       </div>
     </details>
   );

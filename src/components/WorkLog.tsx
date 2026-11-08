@@ -13,7 +13,7 @@
  * one runs); Continue in chat opens the session in the chat view; a failed
  * or stopped run can Rerun. Viewers read only.
  */
-import { decisionLabel } from '../lib/model-selection';
+import { ModelDecisionLine, TierBadge } from './ModelKit';
 import { rerunRefusal } from '../lib/rerun';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useApp, type LiveItem } from '../store';
@@ -393,6 +393,7 @@ function RunRow({ r, first, open, onToggle, detail, agentId, readOnly, agentName
         <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-dim)', border: '1px solid var(--border)', borderRadius: 6, padding: '0 7px', flex: 'none', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.label}</span>
         {person && <span data-testid="from-person" style={{ fontSize: 10.5, fontWeight: 650, color: 'var(--accent-hi, var(--accent))', flex: 'none' }}>from {who(r.by)}</span>}
         {r.rerunOf && <span style={{ ...faint, flex: 'none' }}>rerun</span>}
+        {r.modelDecision && <TierBadge tier={r.modelDecision.tier} bare title={`Auto picked the ${r.modelDecision.tier} tier: ${r.modelDecision.model}`} />}
         <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: r.outcome === 'error' ? 'var(--red)' : 'var(--text)' }}>
           {r.outcome === 'error' && r.error ? r.error : r.outcome === 'interrupted' ? <span data-testid="run-interrupted" style={{ color: 'var(--text-dim)' }}>{interruptedLabel(r.recovery)}</span> : (person ? (r.input || '').replace(/\s+/g, ' ').slice(0, 160) : headline(r)) || '(no answer)'}
         </span>
@@ -415,14 +416,7 @@ function RunRow({ r, first, open, onToggle, detail, agentId, readOnly, agentName
             {r.rerunOf && <button onClick={() => focusRun(r.rerunOf!)} style={linkBtn}>rerun of an earlier run →</button>}
             {r.archived && <span>archived session</span>}
           </div>
-          {r.modelDecision && (
-            <details data-testid="run-model-decision" style={{ fontSize: 12, color: 'var(--text-dim)' }}>
-              <summary style={{ cursor: 'pointer' }}>{decisionLabel(r.modelDecision)} <span style={faint}>· why this model</span></summary>
-              <ul style={{ margin: '4px 0 0', paddingLeft: 18, ...faint }}>
-                {[`score ${r.modelDecision.score}`, ...r.modelDecision.reasons].map((x, i) => <li key={i}>{x}</li>)}
-              </ul>
-            </details>
-          )}
+          {r.modelDecision && <ModelDecisionLine d={r.modelDecision} />}
           {r.outcome === 'error' && r.error && <div style={{ fontSize: 12, color: 'var(--red)' }}>{r.error}</div>}
           {r.outcome === 'interrupted' && (
             <div data-testid="run-interrupted-note" style={{ fontSize: 12, color: 'var(--text-dim)' }}>

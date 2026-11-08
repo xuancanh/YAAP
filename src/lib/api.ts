@@ -2485,7 +2485,7 @@ export const api = {
   modelSelection: (wsId: string) => get<ModelSelectionView>(`/api/workspaces/${enc(wsId)}/model-selection`),
   setModelSelection: (wsId: string, body: { mode?: string; order?: string[]; crossProvider?: boolean }) => send<ModelSelectionView>(`/api/workspaces/${enc(wsId)}/model-selection`, 'PUT', body),
   modelOutcomes: (wsId: string, days = 30) => get<ModelOutcomes>(`/api/workspaces/${enc(wsId)}/model-selection/outcomes?days=${days}`),
-  updateAgentType: (id: string, patch: { model?: string; models?: string[]; tierModels?: Partial<Record<ModelTierName, string | null>>; enabled?: boolean; name?: string; modelMode?: string }) =>
+  updateAgentType: (id: string, patch: { model?: string; models?: string[]; tierModels?: Partial<Record<ModelTierName, string | null>>; enabled?: boolean; name?: string; modelMode?: string; apiKey?: string }) =>
     send<AgentType>(`/api/agent-types/${enc(id)}`, 'PATCH', patch),
   agentTypeModels: (id: string) => get<AgentTypeModels>(`/api/agent-types/${enc(id)}/models`),
   refreshAgentTypeModels: (id: string) => send<AgentTypeModels>(`/api/agent-types/${enc(id)}/models/refresh`, 'POST', {}),

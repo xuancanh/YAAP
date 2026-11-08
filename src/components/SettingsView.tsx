@@ -1,6 +1,6 @@
 /** Settings main pane: providers, MCP servers, skills, permissions, context
  *  budget, and workspace memory — persisted to the real API. */
-import { useEffect, useState, lazy, Suspense } from 'react';
+import { Fragment, useEffect, useState, lazy, Suspense } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp } from '../store';
 import { useAuth } from '../auth';
@@ -16,7 +16,9 @@ import { currentSubscription, disablePush, enablePush, pushSupported } from '../
 import { fmtUsd } from '../lib/pricing';
 import { UsageBars, UsageRows } from './UsageChart';
 import { MODEL_TIERS, fetchedLabel, typeModelList, typeTierModels } from '../lib/agent-models';
-import { MODEL_MODE_LABEL } from '../lib/model-selection';
+import { AUTO_ONE_LINE, FIXED_ONE_LINE, MODEL_MODE_LABEL, MODEL_MODE_SHORT, TIER_LABEL, policyLines } from '../lib/model-selection';
+import { Bar, Card, Empty, InfoButton, Pill, SkeletonRows } from './CompanyKit';
+import { ModeSwitch, TierBadge } from './ModelKit';
 
 const PANE_META: Record<string, [string, string]> = {
   account: ['Account', 'Who you are signed in as, your plan, this month in dollars against its ceiling, and the provider keys your agents run on.'],
@@ -53,14 +55,14 @@ function Toggle({ on, onClick }: { on: boolean; onClick: () => void }) {
   );
 }
 
-/** A type's models (docs/agent-types.md "Models"): the list (Refresh asks the
- *  provider), the default model, and an optional model per tier — every
- *  pick from the list. Creation and the org's tiers resolve through these. */
+/** A type's models (docs/agent-types.md "Models"): the model mode, the
+ *  default model and the model each tier runs on — every pick from the
+ *  type's list — and the list itself (Refresh asks the provider), folded.
+ *  Creation and the org's tiers resolve through these. */
 export function TypeModels({ t, onChanged, toast }: { t: AgentType; onChanged: () => Promise<void> | void; toast: (msg: string) => void }) {
   const [busy, setBusy] = useState(false);
   const list = typeModelList(t);
   const tiers = typeTierModels(t);
-  const sel: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 7, padding: '5px 8px', color: 'var(--text)', fontSize: 12, fontFamily: 'var(--mono)', outline: 'none', maxWidth: '100%' };
   const save = async (patch: { model?: string; tierModels?: Partial<Record<ModelTierName, string | null>>; modelMode?: string }, msg: string) => {
     try { await api.updateAgentType(t.id, patch); await onChanged(); toast(msg); } catch (err) { toast(err instanceof Error ? err.message.slice(0, 160) : 'could not save'); }
   };
@@ -72,43 +74,96 @@ export function TypeModels({ t, onChanged, toast }: { t: AgentType; onChanged: (
       toast(r.ok ? `${t.name}: ${r.models.length} model${r.models.length === 1 ? '' : 's'}${r.defaultChanged ? ` — default ${r.defaultChanged.from} isn't served, now ${r.defaultChanged.to}` : ''}` : `Could not fetch ${t.name}'s models (${r.error ?? 'unknown error'}); kept the configured list`);
     } catch (err) { toast(err instanceof Error ? err.message.slice(0, 160) : 'refresh failed'); } finally { setBusy(false); }
   };
+  const mode = t.modelMode ?? '';
   return (
-    <div data-testid={`type-models-${t.id}`} style={{ marginTop: 12, paddingTop: 11, borderTop: '1px solid var(--border)', display: 'grid', gap: 9 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-        <span style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text-dim)' }}>Models</span>
-        <span style={{ fontSize: 11, color: 'var(--text-faint)' }}>{list.length} · {fetchedLabel(t.modelsFetchedAt)}</span>
-        <button onClick={() => { void refresh(); }} disabled={busy || t.provider === 'echo'} aria-label={`Refresh ${t.name} models`}
-          style={{ marginLeft: 'auto', background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 7, padding: '4px 10px', fontSize: 11.5, cursor: busy ? 'wait' : 'pointer' }}>{busy ? 'Refreshing…' : 'Refresh'}</button>
+    <div data-testid={`type-models-${t.id}`} style={{ display: 'grid', gap: 12, marginTop: 12, paddingTop: 12, borderTop: '1px solid var(--border-soft)' }}>
+      <div className="ms-row">
+        <div className="ms-row-text">
+          <b>Model mode</b>
+          <span>{mode === 'auto' ? AUTO_ONE_LINE : mode === 'fixed' ? FIXED_ONE_LINE : 'Follows the workspace setting above.'} Applies to its agents that don&apos;t set their own.</span>
+        </div>
+        <ModeSwitch label={`${t.name} model mode`} value={mode} inheritLabel="Workspace" onChange={(v) => { void save({ modelMode: v }, `${t.name}: ${v === '' ? 'follows the workspace' : MODEL_MODE_LABEL[v] ?? v} for its agents that set none`); }} />
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 5 }}>
-        {list.map((m) => <span key={m} style={{ fontSize: 11, fontFamily: 'var(--mono)', border: '1px solid var(--border)', borderRadius: 5, padding: '1px 6px', color: m === t.model ? 'var(--green)' : 'var(--text-dim)' }}>{m}</span>)}
-      </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 8 }}>
-        <label style={{ display: 'grid', gap: 3, fontSize: 11, color: 'var(--text-faint)' }}>
-          Model mode
-          <select aria-label={`${t.name} model mode`} value={t.modelMode ?? ''} onChange={(e) => { void save({ modelMode: e.target.value }, `${t.name}: ${MODEL_MODE_LABEL[e.target.value] ?? e.target.value} for its agents that set none`); }} style={{ ...sel, fontFamily: 'inherit' }}>
-            <option value="">the workspace&apos;s</option>
-            <option value="auto">{MODEL_MODE_LABEL.auto}</option>
-            <option value="fixed">{MODEL_MODE_LABEL.fixed}</option>
-          </select>
-        </label>
-        <label style={{ display: 'grid', gap: 3, fontSize: 11, color: 'var(--text-faint)' }}>
-          Default model
-          <select aria-label={`${t.name} default model`} value={t.model} onChange={(e) => { void save({ model: e.target.value }, `${t.name} now defaults to ${e.target.value}`); }} style={sel}>
+      <div className="ms-type-grid">
+        <label className="ms-field">
+          <span>Default model</span>
+          <select className="ms-select" aria-label={`${t.name} default model`} value={t.model} onChange={(e) => { void save({ model: e.target.value }, `${t.name} now defaults to ${e.target.value}`); }}>
             {list.map((m) => <option key={m} value={m}>{m}</option>)}
           </select>
         </label>
         {MODEL_TIERS.map((tier) => (
-          <label key={tier} style={{ display: 'grid', gap: 3, fontSize: 11, color: 'var(--text-faint)' }}>
-            {tier[0].toUpperCase() + tier.slice(1)} tier
-            <select aria-label={`${t.name} ${tier} tier model`} value={tiers[tier] ?? ''} onChange={(e) => { void save({ tierModels: { [tier]: e.target.value || null } }, e.target.value ? `${t.name}: ${tier} tier → ${e.target.value}` : `${t.name}: ${tier} tier uses the default`); }} style={sel}>
+          <label key={tier} className="ms-field">
+            <span><TierBadge tier={tier} bare />{TIER_LABEL[tier]} tier</span>
+            <select className="ms-select" aria-label={`${t.name} ${tier} tier model`} value={tiers[tier] ?? ''} onChange={(e) => { void save({ tierModels: { [tier]: e.target.value || null } }, e.target.value ? `${t.name}: ${tier} tier → ${e.target.value}` : `${t.name}: ${tier} tier uses the default`); }}>
               <option value="">{tier === 'standard' ? 'the default model' : 'automatic'}</option>
               {list.map((m) => <option key={m} value={m}>{m}</option>)}
             </select>
           </label>
         ))}
       </div>
+      <div className="ms-row" style={{ alignItems: 'flex-start' }}>
+        <details className="ms-models" style={{ flex: 1, minWidth: 0 }}>
+          <summary>{list.length} model{list.length === 1 ? '' : 's'} available <span className="co-faint">· {fetchedLabel(t.modelsFetchedAt)}</span></summary>
+          <div className="ms-chips">
+            {list.map((m) => <span key={m} className={`ms-chip${m === t.model ? ' default' : ''}`} title={m === t.model ? 'The default model' : undefined}>{m}</span>)}
+          </div>
+        </details>
+        <button className="co-btn small" onClick={() => { void refresh(); }} disabled={busy || t.provider === 'echo'} aria-label={`Refresh ${t.name} models`} title="Ask the provider which models it serves">{busy ? 'Refreshing…' : 'Refresh list'}</button>
+      </div>
     </div>
+  );
+}
+
+/** Set or replace a type's API key in place: a password field, sent once,
+ *  never shown back (the server keeps it sealed). */
+function TypeKeyForm({ t, onDone, onChanged, toast }: { t: AgentType; onDone: () => void; onChanged: () => Promise<void> | void; toast: (msg: string) => void }) {
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const save = async () => {
+    if (!key.trim()) return;
+    setBusy(true);
+    try { await api.updateAgentType(t.id, { apiKey: key.trim() }); setKey(''); onDone(); await onChanged(); toast(`${t.name}: API key saved`); }
+    catch (err) { toast(err instanceof Error ? err.message.slice(0, 160) : 'could not save the key'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <form className={t.hasApiKey ? 'ms-row' : 'ms-row co-note warn'} style={{ marginTop: 12 }} onSubmit={(e) => { e.preventDefault(); void save(); }} data-testid={`type-key-${t.id}`}>
+      <div className="ms-row-text">
+        <b>{t.hasApiKey ? 'Replace the API key' : 'Add an API key'}</b>
+        <span>{t.hasApiKey ? 'Stored sealed on the server and never shown again.' : 'Until then this type answers with the Echo dev provider. Stored sealed on the server and never shown again.'}</span>
+      </div>
+      <input className="co-input" type="password" autoComplete="off" spellCheck={false} aria-label={`${t.name} API key`} value={key} onChange={(e) => setKey(e.target.value)} placeholder="Paste the key" style={{ flex: '1 1 180px', maxWidth: 260 }} />
+      <button className="co-btn small primary" type="submit" disabled={busy || !key.trim()}>{busy ? 'Saving…' : 'Save key'}</button>
+      {t.hasApiKey && <button className="co-btn small ghost" type="button" onClick={() => { setKey(''); onDone(); }}>Cancel</button>}
+    </form>
+  );
+}
+
+/** One agent type: its name, provider and default model, the default-type
+ *  switch, its key and its models. */
+export function TypeCard({ t, isDefault, keysInAccount }: { t: AgentType; isDefault: boolean; keysInAccount: boolean }) {
+  const app = useApp();
+  const [keyOpen, setKeyOpen] = useState(false);
+  const canKey = !keysInAccount && t.provider !== 'echo';
+  return (
+    <section className="co-card" data-testid={`agent-type-${t.id}`}>
+      <div className="co-card-body" style={{ paddingTop: 14 }}>
+        <div className="ms-type-head">
+          <span className="ms-dot" style={{ background: PROVIDER_COLORS[t.provider] ?? '#94a3b8', width: 10, height: 10 }} />
+          <div className="ms-type-name">
+            <b>{t.name}{isDefault && <Pill tone="ok" plain>Default</Pill>}{!t.hasApiKey && <Pill tone="warn" plain>No API key</Pill>}</b>
+            <span>{t.provider} · {t.model}</span>
+          </div>
+          {canKey && t.hasApiKey && !keyOpen && <button className="co-btn small ghost" onClick={() => setKeyOpen(true)}>Replace key</button>}
+          {isDefault
+            ? <span className="co-faint">New agents use this type</span>
+            : <button className="co-btn small" onClick={() => void app.saveSettings({ defaultAgentTypeId: t.id })}>Make default</button>}
+        </div>
+        {canKey && (!t.hasApiKey || keyOpen) && <TypeKeyForm t={t} onDone={() => setKeyOpen(false)} onChanged={() => app.refreshAgentTypes()} toast={app.showToast} />}
+        {keysInAccount && !t.hasApiKey && <div className="co-note warn" style={{ marginTop: 12 }}>No API key: set your {t.provider} key in Settings › Account.</div>}
+        <TypeModels t={t} onChanged={() => app.refreshAgentTypes()} toast={app.showToast} />
+      </div>
+    </section>
   );
 }
 
@@ -120,6 +175,7 @@ function ProvidersPane() {
   const keysInAccount = auth.mode === 'accounts' && !auth.account?.isAdmin;
   const [adding, setAdding] = useState(false);
   const [presets, setPresets] = useState<ProviderPreset[]>([]);
+  const [quickBusy, setQuickBusy] = useState('');
   useEffect(() => { api.providerPresets().then(setPresets).catch(() => setPresets([])); }, [app.agentTypes.length]);
   // The add form starts on the picked provider's preset default — a DeepSeek
   // type must not start on a Claude model (docs/agent-types.md "Default providers").
@@ -127,76 +183,84 @@ function ProvidersPane() {
   const [form, setForm] = useState({ name: '', provider: 'anthropic', model: 'claude-sonnet-5-5', apiKey: '', baseUrl: '', persona: '' });
   const defaultId = app.settings.defaultAgentTypeId;
   const quickAdd = async (p: ProviderPreset) => {
+    setQuickBusy(p.provider);
     try {
       await api.createAgentTypeFromPreset(p.provider);
       await app.refreshAgentTypes();
-      app.showToast(`Added ${p.name} with its tier map (${MODEL_TIERS.map((t) => p.tierModels[t]).join(' / ')})${keysInAccount ? '' : ' — set its API key below'}`);
-    } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'could not add'); }
+      app.showToast(`Added ${p.name} with its tier map (${MODEL_TIERS.map((t) => p.tierModels[t]).join(' / ')})${keysInAccount ? '' : ' — add its API key on its card'}`);
+    } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'could not add'); } finally { setQuickBusy(''); }
   };
+  const quick = presets.filter((p) => p.default && p.existing.length === 0);
+  const fieldLabel: Record<keyof typeof form, string> = { name: 'Name', provider: 'Provider', model: 'Default model id', apiKey: 'API key', baseUrl: 'Base URL (optional)', persona: 'Persona system prompt (optional)' };
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+    <div className="ms-pane">
       {app.workspaceId && <ModelSelectionCard workspaceId={app.workspaceId} />}
-      {presets.some((p) => p.default && p.existing.length === 0) && (
-        <div data-testid="provider-quick-add" style={{ ...card, display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 12.5, color: 'var(--text-dim)', flex: 1, minWidth: 200 }}>Claude and OpenAI are supported by default: add one with its current models and tier map.</span>
-          {presets.filter((p) => p.default && p.existing.length === 0).map((p) => (
-            <button key={p.provider} onClick={() => { void quickAdd(p); }} style={{ background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Add {p.name}</button>
-          ))}
-        </div>
-      )}
-      {app.agentTypes.map((t) => (
-        <div key={t.id} style={card}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
-            <span style={{ width: 9, height: 9, borderRadius: '50%', background: PROVIDER_COLORS[t.provider] ?? '#94a3b8', flex: 'none' }} />
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <span style={{ fontSize: 14, fontWeight: 600 }}>{t.name}</span>
-                {t.id === defaultId && <span style={{ fontSize: 10, color: 'var(--green)', border: '1px solid var(--green)', borderRadius: 5, padding: '1px 6px' }}>default</span>}
-                {!t.hasApiKey && <span style={{ fontSize: 10, color: 'var(--text-faint)', border: '1px solid var(--text-faint)', borderRadius: 5, padding: '1px 6px' }}>no key</span>}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--text-faint)', marginTop: 3, ...mono }}>{t.provider} · {t.model}</div>
+      {quick.length > 0 && (
+        <section className="co-card" data-testid="provider-quick-add">
+          <div className="co-card-head"><h3 className="co-card-title">Add a provider</h3></div>
+          <div className="co-card-body">
+            <p className="ms-lede">Claude and OpenAI work out of the box: one click adds the provider with its current models and a model for each tier{keysInAccount ? '' : '; then add its API key'}.</p>
+            <div className="ms-presets">
+              {quick.map((p) => (
+                <button key={p.provider} className="ms-preset" disabled={!!quickBusy} onClick={() => { void quickAdd(p); }} aria-label={`Add ${p.name}`}>
+                  <b><span className="ms-dot" style={{ background: PROVIDER_COLORS[p.provider] ?? '#94a3b8' }} />{p.name}<em>{quickBusy === p.provider ? 'Adding…' : '+ Add'}</em></b>
+                  <span className="ms-preset-tiers">
+                    {MODEL_TIERS.map((tier) => <span key={tier}><TierBadge tier={tier} bare /><code>{p.tierModels[tier]}</code></span>)}
+                  </span>
+                </button>
+              ))}
             </div>
-            <button onClick={() => void app.saveSettings({ defaultAgentTypeId: t.id })}
-              style={{ background: t.id === defaultId ? 'var(--accent-dim)' : 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 600, cursor: 'pointer', flex: 'none' }}>
-              {t.id === defaultId ? 'Default' : 'Set default'}
-            </button>
           </div>
-          <TypeModels t={t} onChanged={() => app.refreshAgentTypes()} toast={app.showToast} />
-        </div>
-      ))}
+        </section>
+      )}
+      {app.agentTypes.map((t) => <TypeCard key={t.id} t={t} isDefault={t.id === defaultId} keysInAccount={keysInAccount} />)}
       {adding ? (
-        <div style={{ ...card, display: 'flex', flexDirection: 'column', gap: 9 }}>
-          {keysInAccount && <div style={{ fontSize: 12, color: 'var(--text-faint)' }}>Provider keys are managed in Settings → Account; this preset uses the key you set there.</div>}
-          {([['name', 'Preset name'], ['model', 'Model id'], ['apiKey', 'API key (stored server-side)'], ['baseUrl', 'Base URL (optional, anthropic-compatible)'], ['persona', 'Persona system prompt (optional)']] as const).filter(([k]) => k !== 'apiKey' || !keysInAccount).map(([k, ph]) => (
-            <input key={k} value={form[k]} onChange={(e) => setForm({ ...form, [k]: e.target.value })} placeholder={ph}
-              style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 11px', color: 'var(--text)', fontSize: 13, outline: 'none' }} />
-          ))}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <select value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value, model: presetModel(e.target.value) || (e.target.value === 'echo' ? 'echo' : '') })} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 8, padding: '8px 11px', color: 'var(--text)', fontSize: 13, outline: 'none' }}>
-              <option value="anthropic">Anthropic</option>
-              <option value="openai">OpenAI</option>
-              <option value="deepseek">DeepSeek</option>
-              <option value="kimi">Kimi</option>
-              <option value="glm">GLM</option>
-              <option value="gemini">Gemini</option>
-              <option value="anthropic-compatible">Anthropic-compatible</option>
-              <option value="custom">Custom (OpenAI-compatible)</option>
-              <option value="echo">Echo (dev)</option>
-            </select>
-            <button onClick={async () => {
-              if (!form.name || !form.model) return;
-              const preset = presets.find((p) => p.provider === form.provider && p.model === form.model);
-              await api.createAgentType({ name: form.name, provider: form.provider, model: form.model, apiKey: form.apiKey || undefined, baseUrl: form.baseUrl || undefined, persona: form.persona || undefined, ...(preset ? { models: preset.models, tierModels: preset.tierModels } : {}) });
-              await app.refreshAgentTypes();
-              setAdding(false);
-              app.showToast(`Added ${form.name}`);
-            }} style={{ marginLeft: 'auto', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 8, padding: '8px 16px', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>Add</button>
-            <button onClick={() => setAdding(false)} style={{ background: 'var(--panel-2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: 8, padding: '8px 12px', fontSize: 12.5, cursor: 'pointer' }}>Cancel</button>
+        <form className="co-card" onSubmit={async (e) => {
+          e.preventDefault();
+          if (!form.name || !form.model) return;
+          const preset = presets.find((p) => p.provider === form.provider && p.model === form.model);
+          try {
+            await api.createAgentType({ name: form.name, provider: form.provider, model: form.model, apiKey: form.apiKey || undefined, baseUrl: form.baseUrl || undefined, persona: form.persona || undefined, ...(preset ? { models: preset.models, tierModels: preset.tierModels } : {}) });
+            await app.refreshAgentTypes();
+            setAdding(false);
+            setForm({ ...form, name: '', apiKey: '', baseUrl: '', persona: '' });
+            app.showToast(`Added ${form.name}`);
+          } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'could not add'); }
+        }}>
+          <div className="co-card-head"><h3 className="co-card-title">New agent type</h3></div>
+          <div className="co-card-body co-form">
+            {keysInAccount && <div className="co-faint">Provider keys are managed in Settings › Account; this type uses the key you set there.</div>}
+            <div className="co-form-row">
+              <label className="co-field"><span>{fieldLabel.provider}</span>
+                <select className="co-input" value={form.provider} onChange={(e) => setForm({ ...form, provider: e.target.value, model: presetModel(e.target.value) || (e.target.value === 'echo' ? 'echo' : '') })}>
+                  <option value="anthropic">Anthropic (Claude)</option>
+                  <option value="openai">OpenAI</option>
+                  <option value="deepseek">DeepSeek</option>
+                  <option value="kimi">Kimi</option>
+                  <option value="glm">GLM</option>
+                  <option value="gemini">Gemini</option>
+                  <option value="anthropic-compatible">Anthropic-compatible</option>
+                  <option value="custom">Custom (OpenAI-compatible)</option>
+                  <option value="echo">Echo (dev)</option>
+                </select>
+              </label>
+              <label className="co-field"><span>{fieldLabel.name}</span><input className="co-input" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="e.g. Claude (team key)" /></label>
+            </div>
+            <div className="co-form-row">
+              <label className="co-field"><span>{fieldLabel.model}</span><input className="co-input" required value={form.model} onChange={(e) => setForm({ ...form, model: e.target.value })} style={{ fontFamily: 'var(--mono)', fontSize: 12.5 }} /></label>
+              {!keysInAccount && <label className="co-field"><span>{fieldLabel.apiKey}</span><input className="co-input" type="password" autoComplete="off" spellCheck={false} value={form.apiKey} onChange={(e) => setForm({ ...form, apiKey: e.target.value })} placeholder="Stored sealed on the server" /></label>}
+            </div>
+            <label className="co-field"><span>{fieldLabel.baseUrl}</span><input className="co-input" value={form.baseUrl} onChange={(e) => setForm({ ...form, baseUrl: e.target.value })} placeholder="Only for a gateway or a compatible provider" /></label>
+            <label className="co-field"><span>{fieldLabel.persona}</span><textarea className="co-input" rows={2} value={form.persona} onChange={(e) => setForm({ ...form, persona: e.target.value })} /></label>
+            <div className="co-form-foot">
+              <button type="button" className="co-btn ghost" onClick={() => setAdding(false)}>Cancel</button>
+              <button type="submit" className="co-btn primary" disabled={!form.name || !form.model}>Add type</button>
+            </div>
           </div>
-        </div>
+        </form>
       ) : (
-        <button onClick={() => setAdding(true)} style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center', background: 'var(--panel-2)', border: '1px dashed var(--border)', color: 'var(--text-dim)', borderRadius: 13, padding: 13, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-          <I d={P.plus} size={14} />Add agent type
+        <button onClick={() => setAdding(true)} style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center', background: 'var(--panel-2)', border: '1px dashed var(--border)', color: 'var(--text-dim)', borderRadius: 12, padding: 13, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+          <I d={P.plus} size={14} />Add another agent type
         </button>
       )}
     </div>
@@ -205,19 +269,33 @@ function ProvidersPane() {
 
 /** Automatic model selection for the workspace (docs/agent-types.md "Model
  *  selection"): the default mode, whether an auto agent may run on another
- *  configured provider, the preference order, the tier map each type
- *  resolves to, the company's thresholds, and how each tier did. */
+ *  configured provider, the providers in preference order with the model
+ *  each tier resolves to, how each tier did, and — behind Advanced — the
+ *  company's thresholds in plain words. */
 export function ModelSelectionCard({ workspaceId }: { workspaceId: string }) {
   const app = useApp();
-  const [view, setView] = useState<ModelSelectionView | null>(null);
+  const [view, setView] = useState<ModelSelectionView | null | 'error'>(null);
   const [outcomes, setOutcomes] = useState<ModelOutcomes | null>(null);
-  useEffect(() => {
-    api.modelSelection(workspaceId).then(setView).catch(() => setView(null));
+  const [saving, setSaving] = useState(false);
+  const load = () => {
+    api.modelSelection(workspaceId).then(setView).catch(() => setView('error'));
     api.modelOutcomes(workspaceId).then(setOutcomes).catch(() => setOutcomes(null));
-  }, [workspaceId, app.agentTypes]);
-  if (!view) return null;
+  };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(load, [workspaceId, app.agentTypes]);
+  const title = (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 2 }}>
+      Model selection
+      <InfoButton label="About model selection">
+        In Auto, each task run and chat turn is scored — the kind of work, the size of its brief, its acceptance criteria, risk, dependencies, earlier attempts, the agent&apos;s record and the budget left — and runs on the cheap, standard or strong model of a provider below. The run&apos;s Work log says why. The CEO&apos;s routing pins still win.
+      </InfoButton>
+    </span>
+  );
+  if (view === null) return <Card title={title}><SkeletonRows rows={3} label="Loading model selection" /></Card>;
+  if (view === 'error') return <Card title={title}><div className="co-alert">Could not load model selection. <button className="co-link" onClick={() => { setView(null); load(); }}>Try again</button></div></Card>;
   const save = async (body: { mode?: string; order?: string[]; crossProvider?: boolean }, msg: string) => {
-    try { setView(await api.setModelSelection(workspaceId, body)); app.showToast(msg); } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'could not save'); }
+    setSaving(true);
+    try { setView(await api.setModelSelection(workspaceId, body)); app.showToast(msg); } catch (err) { app.showToast(err instanceof Error ? err.message.slice(0, 160) : 'could not save'); } finally { setSaving(false); }
   };
   const order = [...view.selection.order.filter((id) => view.types.some((t) => t.id === id)), ...view.types.map((t) => t.id).filter((id) => !view.selection.order.includes(id))];
   const move = (id: string, d: -1 | 1) => {
@@ -226,59 +304,101 @@ export function ModelSelectionCard({ workspaceId }: { workspaceId: string }) {
     const next = [...order]; [next[i], next[j]] = [next[j], next[i]];
     void save({ order: next }, 'Provider preference saved');
   };
-  const p = view.policy;
-  const tierName = (n: number) => MODEL_TIERS[Math.max(0, Math.min(2, Math.round(n)))];
-  const sel: React.CSSProperties = { background: 'var(--panel-2)', border: '1px solid var(--border)', borderRadius: 7, padding: '5px 8px', color: 'var(--text)', fontSize: 12, outline: 'none' };
+  const auto = view.selection.mode === 'auto';
+  const cross = view.selection.crossProvider;
+  const hasOutcomes = !!outcomes && outcomes.tiers.some((t) => t.runs + t.turns > 0);
+  const lines = policyLines(view.policy);
   return (
-    <div data-testid="model-selection-card" style={{ ...card, display: 'grid', gap: 10 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-        <span style={{ fontSize: 14, fontWeight: 600, flex: 1 }}>Model selection</span>
-        <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-dim)' }}>
-          Workspace default
-          <select aria-label="Workspace model mode" value={view.selection.mode ?? ''} onChange={(e) => { void save({ mode: e.target.value }, e.target.value === 'auto' ? 'Agents that set no mode now pick their model by task complexity' : 'Agents that set no mode run on their own model'); }} style={sel}>
-            <option value="">{MODEL_MODE_LABEL.fixed}</option>
-            <option value="auto">{MODEL_MODE_LABEL.auto}</option>
-          </select>
-        </label>
-      </div>
-      <div style={{ fontSize: 12, color: 'var(--text-faint)', lineHeight: 1.5 }}>
-        In auto mode each task run and chat turn scores the work (class, brief, criteria and checks, risk, dependencies, attempts, the agent&apos;s record, the envelope) and picks cheap, standard or strong; the run&apos;s work log says why. An agent or a type can set its own mode. The company&apos;s routing pins still win, and the thresholds are its tunables (model.*), derived from its values.
-      </div>
-      <label style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12, color: 'var(--text-dim)', cursor: 'pointer' }}>
-        <input type="checkbox" aria-label="Allow other providers" checked={view.selection.crossProvider} onChange={(e) => { void save({ crossProvider: e.target.checked }, e.target.checked ? 'Auto agents may run on another configured provider' : 'Auto agents stay on their own agent type'); }} style={{ accentColor: 'var(--accent)' }} />
-        An auto agent may run on another configured provider (by the order below, health, price; a reviewer prefers another model family than the maker&apos;s)
-      </label>
-      {view.types.length > 0 && (
-        <div style={{ display: 'grid', gap: 5 }}>
-          {order.map((id, i) => {
-            const t = view.types.find((x) => x.id === id)!;
-            return (
-              <div key={id} data-testid={`model-order-${id}`} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, border: '1px solid var(--border-soft)', borderRadius: 8, padding: '5px 9px', background: 'var(--panel-2)' }}>
-                <span style={{ ...mono, color: 'var(--text-faint)', width: 16 }}>{i + 1}</span>
-                <span style={{ fontWeight: 600, minWidth: 90 }}>{t.name}</span>
-                <span style={{ ...mono, color: 'var(--text-dim)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{MODEL_TIERS.map((tier) => `${tier}: ${t.tiers[tier]}`).join(' · ')}</span>
-                {!t.hasApiKey && <span style={{ fontSize: 10, color: 'var(--text-faint)' }}>no key</span>}
-                <button aria-label={`Prefer ${t.name}`} disabled={i === 0} onClick={() => move(id, -1)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', cursor: 'pointer', padding: '1px 7px' }}>↑</button>
-                <button aria-label={`Prefer ${t.name} less`} disabled={i === order.length - 1} onClick={() => move(id, 1)} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text)', cursor: 'pointer', padding: '1px 7px' }}>↓</button>
-              </div>
-            );
-          })}
+    <section className="co-card" data-testid="model-selection-card">
+      <div className="co-card-head"><h3 className="co-card-title">{title}</h3></div>
+      <div className="co-card-body">
+        <div className="ms-row">
+          <div className="ms-row-text">
+            <b>How agents pick a model</b>
+            <span>{auto ? AUTO_ONE_LINE : FIXED_ONE_LINE} An agent type or an agent can choose differently.</span>
+          </div>
+          <ModeSwitch label="Workspace model mode" options={['fixed', 'auto']} value={auto ? 'auto' : 'fixed'} disabled={saving}
+            onChange={(v) => { void save({ mode: v === 'auto' ? 'auto' : '' }, v === 'auto' ? 'Agents that set no mode now pick their model by task complexity' : 'Agents that set no mode run on their own model'); }} />
         </div>
-      )}
-      <div style={{ fontSize: 11.5, color: 'var(--text-faint)', ...mono }}>
-        cheap ≤ {p.cheapMaxScore} · strong ≥ {p.strongMinScore} · floor {tierName(p.floorTier)} · ceiling {tierName(p.ceilingTier)} · risky ≥ {tierName(p.riskFloorTier)} · escalate after {p.retryEscalateAfter} retry · tight budget &lt; {p.budgetTightPct}% · agent requests ±{p.requestCap}
+        <div className="ms-row">
+          <div className="ms-row-text">
+            <b>Let Auto use any provider</b>
+            <span>{cross ? 'An auto agent may run on another provider below — by your order, provider health and price. A reviewer prefers a different model family than the maker.' : 'Each auto agent stays on its own agent type and picks among its models.'}{auto ? '' : ' Applies to the agents and types set to Auto.'}</span>
+          </div>
+          <button type="button" role="switch" className="ms-switch" aria-checked={cross} aria-label="Allow other providers" disabled={saving}
+            onClick={() => { void save({ crossProvider: !cross }, !cross ? 'Auto agents may run on another configured provider' : 'Auto agents stay on their own agent type'); }} />
+        </div>
+        {view.types.length > 0 ? (
+          <div style={{ display: 'grid', gap: 7 }}>
+            <h4 className="ms-section-title">Which model each tier runs on <span className="co-faint">{cross && order.length > 1 ? '· first is preferred' : ''}</span></h4>
+            <div className="ms-map" role="table" aria-label="Providers and the model each tier runs on">
+              <div className="ms-map-row head" role="row">
+                <span role="columnheader" aria-label="Preference" />
+                <span role="columnheader">Provider</span>
+                {MODEL_TIERS.map((tier) => <span key={tier} role="columnheader"><TierBadge tier={tier} /></span>)}
+                <span role="columnheader" aria-label="Reorder" />
+              </div>
+              {order.map((id, i) => {
+                const t = view.types.find((x) => x.id === id)!;
+                return (
+                  <div key={id} className="ms-map-row" role="row" data-testid={`model-order-${id}`}>
+                    <span className="ms-map-rank" role="cell">{i + 1}</span>
+                    <span className="ms-map-name" role="cell">
+                      <span className="ms-dot" style={{ background: PROVIDER_COLORS[t.provider] ?? '#94a3b8' }} />
+                      <span>{t.name}</span>
+                      {!t.hasApiKey && <Pill tone="warn" plain title="This type has no API key: it answers with the Echo dev provider">no key</Pill>}
+                      {t.modelMode && <Pill plain title={`Its agents that set no mode use ${MODEL_MODE_LABEL[t.modelMode] ?? t.modelMode}`}>{MODEL_MODE_SHORT[t.modelMode] ?? t.modelMode}</Pill>}
+                    </span>
+                    {MODEL_TIERS.map((tier) => <span key={tier} className="ms-map-model" role="cell" title={t.tiers[tier]}><i>{TIER_LABEL[tier]}</i>{t.tiers[tier]}</span>)}
+                    <span className="ms-map-move" role="cell">
+                      <button className="co-iconbtn" style={{ width: 24, height: 24 }} aria-label={`Prefer ${t.name}`} disabled={i === 0 || saving} onClick={() => move(id, -1)}>↑</button>
+                      <button className="co-iconbtn" style={{ width: 24, height: 24 }} aria-label={`Prefer ${t.name} less`} disabled={i === order.length - 1 || saving} onClick={() => move(id, 1)}>↓</button>
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+            <span className="co-faint">Change a provider&apos;s tier models on its card below.</span>
+          </div>
+        ) : <Empty compact title="No providers yet">Add Claude or OpenAI below; Auto then picks among their models.</Empty>}
+        <div style={{ display: 'grid', gap: 7 }}>
+          <h4 className="ms-section-title">How each tier did <span className="co-faint">· last {outcomes?.days ?? 30} days</span></h4>
+          {hasOutcomes ? (
+            <div className="ms-outcomes" data-testid="model-outcomes">
+              {outcomes!.tiers.map((t) => (
+                <div key={t.tier} className="ms-outcome" data-testid={`model-outcome-${t.tier}`}>
+                  <div className="ms-outcome-top">
+                    <TierBadge tier={t.tier} />
+                    <span className="ms-outcome-rate">{t.successRate === null ? '—' : `${Math.round(t.successRate * 100)}%`}<small>{t.successRate === null ? 'no runs' : 'success'}</small></span>
+                  </div>
+                  <Bar value={t.successRate} tone={t.successRate === null ? 'muted' : t.successRate >= 0.8 ? 'ok' : t.successRate >= 0.5 ? 'warn' : 'bad'} label={`${t.tier} success rate`} />
+                  <div className="ms-outcome-facts">
+                    <span><b>{t.runs}</b> task runs</span>
+                    <span><b>{t.turns}</b> chat turns</span>
+                    <span><b>{t.failed}</b> failed</span>
+                    <span title="Retries that moved up a tier"><b>{t.reworked}</b> retried up</span>
+                    <span><b>{t.runs ? fmtUsd(t.avgUsd) : '—'}</b> per run</span>
+                    <span><b>{fmtUsd(t.usd)}</b> total</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : <div className="co-faint">No auto runs yet. Once agents run on Auto, each tier&apos;s success rate and cost show here.</div>}
+        </div>
+        <details className="ms-adv" data-testid="model-thresholds">
+          <summary>Advanced: when Auto moves up or down a tier</summary>
+          <div className="ms-adv-body">
+            <dl className="co-dl">
+              {lines.map((l) => <Fragment key={l.key}><dt title={l.key}>{l.label}</dt><dd>{l.value}</dd></Fragment>)}
+            </dl>
+            <div className="co-faint">
+              The work&apos;s score counts its kind, brief, criteria, risk and dependencies. These thresholds are the company&apos;s tunables, set from its values and culture; the chief of staff tunes them, and so can you in{' '}
+              <button className="co-link" style={{ fontSize: 12 }} onClick={() => app.openSettings('company')}>Settings › Company</button>.
+            </div>
+          </div>
+        </details>
       </div>
-      {outcomes && outcomes.tiers.some((t) => t.runs + t.turns > 0) && (
-        <table data-testid="model-outcomes" style={{ fontSize: 11.5, borderCollapse: 'collapse', width: '100%' }}>
-          <thead><tr style={{ color: 'var(--text-faint)', textAlign: 'left' }}><th>Tier ({outcomes.days} days)</th><th>Runs</th><th>Success</th><th>Failed</th><th>Escalated retries</th><th>Avg cost</th><th>Chat turns</th></tr></thead>
-          <tbody>
-            {outcomes.tiers.map((t) => (
-              <tr key={t.tier}><td>{t.tier}</td><td>{t.runs}</td><td>{t.successRate === null ? '—' : `${Math.round(t.successRate * 100)}%`}</td><td>{t.failed}</td><td>{t.reworked}</td><td>{fmtUsd(t.avgUsd)}</td><td>{t.turns}</td></tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-    </div>
+    </section>
   );
 }
 

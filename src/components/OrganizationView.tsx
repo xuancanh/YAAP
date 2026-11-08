@@ -7,7 +7,8 @@
  *  log)… The approvals queue (full artifact, never a summary) renders in the
  *  Inbox. Enabling, the mode, the chief and the caps live in Settings ›
  *  Company; the group log moved to the `#company` channel. */
-import { decisionLabel, decisionReasons, parseDecisionJson } from '../lib/model-selection';
+import { parseDecisionJson } from '../lib/model-selection';
+import { ModelDecisionLine } from './ModelKit';
 import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { useApp, type OrgPane } from '../store';
 import { sectionDef, sectionOfPane, type CompanySection } from '../lib/company-nav';
@@ -758,7 +759,8 @@ function RunRow({ r, names, title }: { r: OrgRun; names: Map<string, Agent>; tit
       <Avatar a={a} size={18} />
       <div style={{ flex: 1, minWidth: 0, fontSize: 12.5 }}>
         <span style={{ fontWeight: 600 }}>{a?.name ?? '?'}</span> {r.wakeReason} → {r.outcome || r.status}{title ? <span style={faint}> · {title}</span> : null}
-        <div style={faint}>{ago(r.startedAt)} · {r.tokensIn + r.tokensOut} tokens · {fmtUsd(r.usd)}{decision ? <span data-testid="run-tier" title={decisionReasons(decision)}> · {decisionLabel(decision)}</span> : null}</div>
+        <div style={faint}>{ago(r.startedAt)} · {r.tokensIn + r.tokensOut} tokens · {fmtUsd(r.usd)}</div>
+        {decision && <div style={{ marginTop: 3 }}><ModelDecisionLine d={decision} testid="run-tier" compact /></div>}
       </div>
       {r.sessionId && <button style={btn()} onClick={() => app.openSession(r.sessionId!)}>Open session</button>}
     </div>

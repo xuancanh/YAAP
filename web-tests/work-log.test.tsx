@@ -129,8 +129,13 @@ describe('the Work log tab', () => {
     const row = await waitFor(() => screen.getByTestId('work-run'));
     fireEvent.click(within(row).getByRole('button', { expanded: false }));
     const d = await waitFor(() => within(row).getByTestId('run-model-decision'));
-    expect(d).toHaveTextContent('Auto · strong · claude-opus-5-5');
-    expect(d).toHaveTextContent('+3 class synthesis');
+    expect(d).toHaveTextContent(/Auto\s*Strong\s*claude-opus-5-5/);
+    // the reasons stay folded until asked for
+    expect(d).not.toHaveTextContent('class synthesis');
+    fireEvent.click(within(d).getByRole('button', { name: 'Why this model' }));
+    expect(d).toHaveTextContent('Complexity score 7');
+    expect(within(d).getByRole('list', { name: 'What the score counted' })).toHaveTextContent('+3class synthesis');
+    expect(within(d).getByRole('list', { name: 'Then' })).toHaveTextContent('risk floor standard');
   });
 
   it('a link to a work session filters to it and opens its newest run', async () => {

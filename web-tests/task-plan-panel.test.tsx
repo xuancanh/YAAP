@@ -5,7 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TaskPlanView } from '../src/lib/api';
-import { planIsLive, planSummary, sessionTree } from '../src/lib/task-plans';
+import { attemptWord, planIsLive, planSummary, sessionTree, stepStages, stepStatusWord } from '../src/lib/task-plans';
 
 const { TaskPlanPanel } = await import('../src/components/TaskPlanPanel');
 
@@ -48,15 +48,26 @@ describe('the task plan panel', () => {
     expect(screen.getByText('Orchestrated')).toBeInTheDocument();
     const r1 = screen.getAllByTestId('task-plan-step')[0];
     expect(r1).toHaveAttribute('data-status', 'done');
-    expect(within(r1).getByText(/after|parallel-safe/)).toHaveTextContent('parallel-safe · cheap');
+    expect(within(r1).getByTestId('task-plan-step-meta')).toHaveTextContent('Done1/1 criteria met');
+    expect(r1.querySelector('[data-tier]')).toHaveTextContent('Cheap');
     expect(within(r1).getByText(/gartner\.com/)).toBeInTheDocument();
-    expect(within(screen.getAllByTestId('task-plan-step')[1]).getByText('ready')).toBeInTheDocument();
+    const w = screen.getAllByTestId('task-plan-step')[1];
+    expect(within(w).getByTestId('task-plan-step-meta')).toHaveTextContent('Readyafter r1');
+    // steps are grouped by stage: w waits on r1
+    expect(screen.getByText('Stage 2')).toBeInTheDocument();
+    expect(screen.getByTestId('task-plan-caps')).toHaveTextContent('3 of 12 sessions');
+    expect(screen.getByTestId('task-plan-caps')).toHaveTextContent('$0.04 of $5.00');
+    fireEvent.click(screen.getByTestId('task-plan-tab-decisions'));
     expect(within(screen.getByTestId('task-plan-decisions')).getByText('Figures in USD')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('task-plan-tab-handoffs'));
     expect(within(screen.getByTestId('task-plan-handoffs')).getByText('Write section 2')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('task-plan-tab-history'));
+    expect(screen.getByTestId('task-plan-versions')).toHaveTextContent('added the writer');
   });
 
   it('nests workers under the master; a worker transcript is fetched only when opened', async () => {
     render(<TaskPlanPanel source={{ kind: 'session', sessionId: 'm' }} />);
+    fireEvent.click(await screen.findByTestId('task-plan-tab-sessions'));
     await waitFor(() => expect(screen.getAllByTestId('task-plan-session')).toHaveLength(2));
     const [master, worker] = screen.getAllByTestId('task-plan-session');
     expect(master).toHaveAttribute('data-role', 'master');
@@ -86,5 +97,11 @@ describe('the task plan panel', () => {
     expect(planSummary(VIEW)).toBe('1/2 steps · 3 sessions · $0.04');
     expect(planIsLive(VIEW)).toBe(false);
     expect(planIsLive({ ...VIEW, steps: [{ ...VIEW.steps[1], status: 'running' }] })).toBe(true);
+    const stages = stepStages([{ id: 'a', dependsOn: [] }, { id: 'b', dependsOn: [] }, { id: 'c', dependsOn: ['a', 'b'] }, { id: 'd', dependsOn: ['c', 'gone'] }, { id: 'x', dependsOn: ['y'] }, { id: 'y', dependsOn: ['x'] }]);
+    expect(Object.fromEntries(stages)).toMatchObject({ a: 0, b: 0, c: 1, d: 2 });
+    expect(stages.has('x') && stages.has('y')).toBe(true);
+    expect(stepStatusWord({ status: 'pending', ready: true })).toBe('Ready');
+    expect(stepStatusWord({ status: 'pending', ready: false })).toBe('Waiting');
+    expect([attemptWord(1), attemptWord(2), attemptWord(3), attemptWord(11)]).toEqual(['', '2nd try', '3rd try', '11th try']);
   });
 });

@@ -214,7 +214,9 @@ Every decision — `{ tier, score, model, agentTypeId, provider, family,
 reasons, requested }` — is stored on the turn (`chat_turns.modelDecision`)
 and, for task runs, on the run (`org_runs.tier`, `org_runs.modelDecision`)
 and in the `run_start` audit row. The Work log shows *Auto · tier · model*
-with the reasons on each run; the task's run list shows the same.
+on each run (a tier badge on the collapsed row); *Why this model* opens the
+score's signals and what moved the tier after. The task's run list shows
+the same.
 Verifier independence (docs/quality.md) judges an auto agent by the model
 its latest run used.
 
@@ -225,10 +227,13 @@ and chat turns — the numbers to tune the thresholds by.
 ### Settings and tunables
 
 - Settings › Providers & agent types › **Model selection**: the workspace
-  default mode, *may run on another provider*, the preference order, each
-  type's tier map, the company's thresholds and the outcomes table (`GET|PUT
-  /api/workspaces/:id/model-selection`).
-- Each type: a model mode and the three tier pickers.
+  default mode (Fixed / Auto), *Let Auto use any provider*, the providers in
+  preference order with the model each tier runs on, each tier's success
+  rate and cost, and — behind *Advanced* — the company's thresholds in plain
+  words (`GET|PUT /api/workspaces/:id/model-selection`).
+- Each type: a model mode (Workspace / Auto / Fixed), the default and three
+  tier pickers, its model list (folded) and its API key (a password field,
+  sent once, never shown back).
 - Each agent (Settings › Model): *Inherit*, *Auto (by task complexity)* or
   *Fixed model*.
 - The thresholds are the company's tunables (`model.*`, area capital), set

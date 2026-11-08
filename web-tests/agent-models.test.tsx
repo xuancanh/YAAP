@@ -10,7 +10,7 @@ import { effectiveType, fetchedLabel, typeModelList, typeTierModels } from '../s
 const fake: Record<string, unknown> = {};
 vi.mock('../src/store', () => ({ useApp: () => fake, grad: () => '', gradPair: () => ['#000', '#fff'] }));
 
-const { TypeModels, ModelSelectionCard } = await import('../src/components/SettingsView');
+const { TypeModels, TypeCard, ModelSelectionCard } = await import('../src/components/SettingsView');
 const { ModelCard } = await import('../src/components/AgentsView');
 
 const ds: AgentType = {
@@ -22,7 +22,7 @@ beforeEach(() => {
   for (const k of Object.keys(fake)) delete fake[k];
   Object.assign(fake, {
     agentTypes: [ds], settings: { defaultAgentTypeId: 'tDS' }, showToast: vi.fn(),
-    refreshAgents: vi.fn(async () => {}), refreshSessions: vi.fn(async () => {}), refreshAgentTypes: vi.fn(async () => {}),
+    refreshAgents: vi.fn(async () => {}), refreshSessions: vi.fn(async () => {}), refreshAgentTypes: vi.fn(async () => {}), saveSettings: vi.fn(async () => {}), openSettings: vi.fn(),
   });
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); });
@@ -58,6 +58,38 @@ describe('Settings › Providers & agent types: a type\'s models', () => {
     expect(strong.value).toBe('deepseek-v4-pro');
     fireEvent.change(within(box).getByLabelText('DeepSeek cheap tier model'), { target: { value: 'deepseek-flash' } });
     await waitFor(() => expect(update).toHaveBeenCalledWith('tDS', { tierModels: { cheap: 'deepseek-flash' } }));
+  });
+
+  it('the type\'s model mode is a Workspace / Auto / Fixed switch', async () => {
+    const update = vi.spyOn(api, 'updateAgentType').mockResolvedValue(ds);
+    render(<TypeModels t={ds} onChanged={async () => {}} toast={vi.fn()} />);
+    const mode = screen.getByRole('radiogroup', { name: 'DeepSeek model mode' });
+    expect(within(mode).getByRole('radio', { name: 'Workspace' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(within(mode).getByRole('radio', { name: 'Fixed' }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith('tDS', { modelMode: 'fixed' }));
+  });
+
+  it('a type without a key asks for one in a password field; the key is sent once and never shown', async () => {
+    const update = vi.spyOn(api, 'updateAgentType').mockResolvedValue(ds);
+    const noKey = { ...ds, hasApiKey: false };
+    const { container } = render(<TypeCard t={noKey} isDefault={false} keysInAccount={false} />);
+    expect(screen.getByText('No API key')).toBeTruthy();
+    const input = screen.getByLabelText('DeepSeek API key') as HTMLInputElement;
+    expect(input.type).toBe('password');
+    fireEvent.change(input, { target: { value: 'sk-test-123' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save key' }));
+    await waitFor(() => expect(update).toHaveBeenCalledWith('tDS', { apiKey: 'sk-test-123' }));
+    await waitFor(() => expect(input.value).toBe(''));
+    expect(container.textContent).not.toContain('sk-test-123');
+  });
+
+  it('a type with a key offers Replace key behind a button, and Make default', () => {
+    render(<TypeCard t={ds} isDefault={false} keysInAccount={false} />);
+    expect(screen.queryByLabelText('DeepSeek API key')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Replace key' }));
+    expect(screen.getByLabelText('DeepSeek API key')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Make default' }));
+    expect(fake.saveSettings).toHaveBeenCalledWith({ defaultAgentTypeId: 'tDS' });
   });
 
   it('a failed refresh says so and keeps the list', async () => {
@@ -98,10 +130,10 @@ describe('agent Settings › Model', () => {
   it('the model mode: Auto (by task complexity) saves modelMode, and says what it does', async () => {
     const upd = vi.spyOn(api, 'updateAgent').mockResolvedValue(agent);
     render(<ModelCard a={agent} />);
-    const mode = screen.getByLabelText('Model mode') as HTMLSelectElement;
-    expect(mode.value).toBe('');
-    fireEvent.change(mode, { target: { value: 'auto' } });
-    expect(screen.getByText(/picks cheap, standard or strong/)).toBeTruthy();
+    const mode = screen.getByRole('radiogroup', { name: 'Model mode' });
+    expect(within(mode).getByRole('radio', { name: 'Inherit' })).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(within(mode).getByRole('radio', { name: 'Auto' }));
+    expect(screen.getByTestId('agent-model-mode-hint').textContent).toMatch(/cheap, standard or strong model/);
     fireEvent.click(screen.getByText('Save'));
     await waitFor(() => expect(upd).toHaveBeenCalledWith('a1', { agentTypeId: 'tDS', model: 'deepseek-flash', applyToChats: true, modelMode: 'auto' }));
   });
@@ -130,10 +162,40 @@ describe('Settings › Model selection', () => {
     render(<ModelSelectionCard workspaceId="w1" />);
     await waitFor(() => expect(screen.getByTestId('model-selection-card')).toBeTruthy());
     expect(screen.getByTestId('model-order-tO').textContent).toMatch(/gpt-6-astra/);
-    fireEvent.change(screen.getByLabelText('Workspace model mode'), { target: { value: 'auto' } });
+    fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Workspace model mode' })).getByRole('radio', { name: 'Auto' }));
     await waitFor(() => expect(put).toHaveBeenCalledWith('w1', { mode: 'auto' }));
     fireEvent.click(screen.getByLabelText('Prefer OpenAI'));
     await waitFor(() => expect(put).toHaveBeenCalledWith('w1', { order: ['tO', 'tC'] }));
     await waitFor(() => expect(screen.getByTestId('model-outcomes').textContent).toMatch(/75%/));
+    expect(screen.getByTestId('model-outcome-cheap').textContent).toMatch(/4 task runs/);
+    expect(screen.getByTestId('model-outcome-cheap').textContent).toMatch(/\$0\.01 per run/);
+    // the thresholds read as plain words behind Advanced, not as tunable strings
+    const adv = screen.getByTestId('model-thresholds');
+    expect((adv as HTMLDetailsElement).open).toBe(false);
+    expect(adv.textContent).toMatch(/Use the cheap model.*when the work scores 1 or less/);
+    expect(adv.textContent).toMatch(/Risky work.*never below standard/);
+    expect(adv.textContent).not.toMatch(/cheapMaxScore/);
+  });
+
+  it('says so when nothing ran on Auto yet, and the cross-provider switch saves', async () => {
+    vi.spyOn(api, 'modelSelection').mockResolvedValue(view);
+    vi.spyOn(api, 'modelOutcomes').mockResolvedValue({ days: 30, tiers: [] });
+    const put = vi.spyOn(api, 'setModelSelection').mockResolvedValue({ ...view, selection: { ...view.selection, crossProvider: false } });
+    render(<ModelSelectionCard workspaceId="w1" />);
+    await waitFor(() => expect(screen.getByText(/No auto runs yet/)).toBeTruthy());
+    expect(screen.queryByTestId('model-outcomes')).toBeNull();
+    const sw = screen.getByRole('switch', { name: 'Allow other providers' });
+    expect(sw).toHaveAttribute('aria-checked', 'true');
+    fireEvent.click(sw);
+    await waitFor(() => expect(put).toHaveBeenCalledWith('w1', { crossProvider: false }));
+  });
+
+  it('a load failure says so and offers a retry', async () => {
+    const get = vi.spyOn(api, 'modelSelection').mockRejectedValueOnce(new Error('500')).mockResolvedValue(view);
+    vi.spyOn(api, 'modelOutcomes').mockResolvedValue({ days: 30, tiers: [] });
+    render(<ModelSelectionCard workspaceId="w1" />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+    await waitFor(() => expect(screen.getByTestId('model-selection-card')).toBeTruthy());
+    expect(get).toHaveBeenCalledTimes(2);
   });
 });

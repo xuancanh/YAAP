@@ -4,7 +4,8 @@
  *  (Tasks, Schedule), Chats, Artifacts, Memory (file brain) and Settings
  *  (General, Skills & tools, Mini apps, Trust). Old tab names still resolve
  *  (src/lib/agent-tabs.ts). */
-import { MODEL_MODE_LABEL } from '../lib/model-selection';
+import { AUTO_ONE_LINE, FIXED_ONE_LINE, MODEL_MODE_LABEL } from '../lib/model-selection';
+import { ModeSwitch } from './ModelKit';
 import { useCallback, useEffect, useMemo, useRef, useState, lazy, Suspense } from 'react';
 import { I, P } from '../lib/icons';
 import { useApp, grad, gradPair } from '../store';
@@ -1220,15 +1221,15 @@ export function ModelCard({ a }: { a: Agent }) {
         <div style={{ fontSize: 12.5, color: 'var(--amber)' }}>No enabled agent types. Add one with an API key in Settings → Models first.</div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
-          <label style={{ display: 'grid', gap: 4, fontSize: 11.5, color: 'var(--text-faint)' }}>
-            Model mode
-            <select aria-label="Model mode" value={mode} onChange={(e) => setMode(e.target.value)} style={{ ...fieldInput, cursor: 'pointer' }}>
-              <option value="">Inherit (the type&apos;s, then the workspace&apos;s)</option>
-              <option value="auto">{MODEL_MODE_LABEL.auto}</option>
-              <option value="fixed">{MODEL_MODE_LABEL.fixed}</option>
-            </select>
-            {mode === 'auto' && <span style={{ fontSize: 11, color: 'var(--text-dim)' }}>Each task run and chat turn picks cheap, standard or strong from the work&apos;s complexity, attempts and budget — possibly on another configured provider (Settings › Models › Model selection). The model below is the fallback.</span>}
-          </label>
+          <div style={{ display: 'grid', gap: 6, fontSize: 11.5, color: 'var(--text-faint)', gridColumn: '1 / -1' }}>
+            <span aria-hidden>Model mode</span>
+            <ModeSwitch label="Model mode" value={mode} onChange={setMode} />
+            <span data-testid="agent-model-mode-hint" style={{ fontSize: 12, color: 'var(--text-dim)', lineHeight: 1.45 }}>
+              {mode === 'auto' ? `${AUTO_ONE_LINE} It may use another configured provider (Settings › Providers & agent types); the model below is the fallback.`
+                : mode === 'fixed' ? FIXED_ONE_LINE
+                  : picked?.modelMode ? `Follows ${picked.name}: ${MODEL_MODE_LABEL[picked.modelMode] ?? picked.modelMode}.` : 'Follows its agent type, then the workspace setting in Settings › Providers & agent types.'}
+            </span>
+          </div>
           <label style={{ display: 'grid', gap: 4, fontSize: 11.5, color: 'var(--text-faint)' }}>
             Agent type
             <select value={typeId} onChange={(e) => { const t = types.find((x) => x.id === e.target.value); setTypeId(e.target.value); if (t) { setModel(t.model); setCustom(false); } }} style={{ ...fieldInput, cursor: 'pointer' }}>

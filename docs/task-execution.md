@@ -158,12 +158,16 @@ before.
 ## 5. On screen
 
 The task drawer, each run in the Work log and a chat with a plan show the
-**plan panel**: mode, version, sessions and cost against the caps; each step
-with its status, dependencies, tier, attempts, cost and the session that ran
-it, its output and criteria with evidence; the decision log; the handoff
-packets; the session tree (master → workers, lead → continuations) with each
-worker's transcript collapsed by default — like tool calls and thinking,
-expanded on demand.
+**plan panel** (`TaskPlanPanel.tsx`). Its header is the glance: mode,
+status, failed steps, a progress bar, steps done, sessions and cost. Open,
+it shows the sessions and cost against the caps, then the steps grouped
+into **stages** — a step's stage is one past its latest dependency, so the
+steps of a stage can run side by side — each row with its status, id,
+title, dependencies, attempt, criteria met, tier and cost, opening to its
+goal, exit criteria with evidence, model, notes and output. Tabs hold the
+session tree (master → workers, lead → continuations, each worker's
+transcript collapsed until opened — like tool calls and thinking), the
+decision log, the handoff packets and the versions.
 
 ## 6. The tools
 
